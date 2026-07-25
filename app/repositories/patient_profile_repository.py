@@ -25,11 +25,18 @@ def _merge_list_field(existing: str | None, new_value: str) -> str:
 
 
 def _row_to_profile(row) -> dict[str, Any]:
-    return {field: row[field] for field in ("id", "user_id", *PROFILE_FIELDS, "created_at", "updated_at")}
+    profile = {field: row[field] for field in ("id", "user_id", *PROFILE_FIELDS, "created_at", "updated_at")}
+    if "phone_normalized" in row.keys():
+        profile["phone_normalized"] = row["phone_normalized"]
+    return profile
+
+
+def _profile_columns() -> str:
+    return ", ".join(("id", "user_id", *PROFILE_FIELDS, "phone_normalized", "created_at", "updated_at"))
 
 
 def get_patient_profile(user_id: int) -> dict[str, Any] | None:
-    columns = ", ".join(("id", "user_id", *PROFILE_FIELDS, "created_at", "updated_at"))
+    columns = _profile_columns()
     with get_connection() as conn:
         row = conn.execute(
             f"SELECT {columns} FROM patient_profiles WHERE user_id = ?",
@@ -78,7 +85,7 @@ def get_or_create_patient_profile(user_id: int) -> dict[str, Any]:
 
 
 def update_patient_profile(user_id: int, **fields: Any) -> dict[str, Any]:
-    unknown = set(fields) - set(PROFILE_FIELDS)
+    unknown = set(fields) - (set(PROFILE_FIELDS) | {"phone_normalized"})
     if unknown:
         raise ValueError(f"Unknown profile fields: {sorted(unknown)}")
 
@@ -96,6 +103,22 @@ def update_patient_profile(user_id: int, **fields: Any) -> dict[str, Any]:
             value = updates[numeric_field]
             if not isinstance(value, int) or value <= 0 or value > max_value:
                 raise ValueError(f"Invalid {numeric_field}: {value!r}")
+
+    if "latitude" in updates:
+        latitude = updates["latitude"]
+        if not isinstance(latitude, (int, float)) or latitude < -90 or latitude > 90:
+            raise ValueError(f"Invalid latitude: {latitude!r}")
+
+    if "longitude" in updates:
+        longitude = updates["longitude"]
+        if not isinstance(longitude, (int, float)) or longitude < -180 or longitude > 180:
+            raise ValueError(f"Invalid longitude: {longitude!r}")
+
+    if "phone_number" in updates:
+        from app.services.patient_intake.phone import normalize_phone
+
+        updates["phone_number"] = normalize_phone(str(updates["phone_number"]))
+        updates["phone_normalized"] = updates["phone_number"]
 
     profile = get_or_create_patient_profile(user_id)
     for field in LIST_MERGE_FIELDS:
@@ -123,4 +146,8 @@ def update_patient_profile(user_id: int, **fields: Any) -> dict[str, Any]:
     )
     updated = get_patient_profile(user_id)
     assert updated is not None
+
+    from app.services.communication.channels import sync_patient_channels
+
+    sync_patient_channels(user_id)
     return updated

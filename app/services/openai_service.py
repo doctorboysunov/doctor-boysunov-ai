@@ -5,6 +5,7 @@ from typing import Any
 from openai import OpenAI
 
 from app.config import OPENAI_API_KEY, OPENAI_MODEL
+from app.domain.conversation_mode import ConversationMode
 from app.safety.instructions import build_safety_instructions
 from app.safety.safety_layer import (
     combine_instructions,
@@ -12,6 +13,7 @@ from app.safety.safety_layer import (
     extract_latest_user_message,
 )
 from app.services.patient_context import build_profile_instructions
+from app.services.receptionist_instructions import build_receptionist_instructions
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 logger = logging.getLogger("doctor_boysunov.openai")
@@ -46,6 +48,8 @@ def _build_input(messages: list[Message]) -> list[dict[str, Any]]:
 def ask_ai(
     messages: str | list[Message],
     patient_profile: dict[str, Any] | None = None,
+    *,
+    conversation_mode: ConversationMode = "patient",
 ) -> str:
     if isinstance(messages, str):
         history = [{"role": "user", "content": messages}]
@@ -61,7 +65,13 @@ def ask_ai(
         api_input = _build_input(history)
 
     profile_instructions = build_profile_instructions(patient_profile)
-    instructions = combine_instructions(profile_instructions=profile_instructions)
+    receptionist_instructions = (
+        build_receptionist_instructions() if conversation_mode == "patient" else None
+    )
+    instructions = combine_instructions(
+        profile_instructions=profile_instructions,
+        receptionist_instructions=receptionist_instructions,
+    )
 
     request_kwargs: dict[str, Any] = {
         "model": OPENAI_MODEL,

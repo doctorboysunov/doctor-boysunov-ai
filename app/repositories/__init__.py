@@ -1,3 +1,16 @@
+from app.repositories.appointment_repository import (
+    add_admin_notes,
+    cancel_appointment,
+    confirm_appointment,
+    create_appointment,
+    get_appointment,
+    get_patient_appointments,
+    list_appointments,
+    list_appointments_by_status,
+    list_appointments_for_date,
+    reschedule_appointment,
+    update_status,
+)
 from app.repositories.conversation_repository import (
     get_last_messages,
     get_last_response_id,
@@ -44,4 +57,15 @@ __all__ = [
     "get_patient_file",
     "get_patient_files",
     "get_patient_file_for_history",
+    "create_appointment",
+    "get_appointment",
+    "get_patient_appointments",
+    "list_appointments",
+    "list_appointments_by_status",
+    "list_appointments_for_date",
+    "confirm_appointment",
+    "reschedule_appointment",
+    "add_admin_notes",
+    "update_status",
+    "cancel_appointment",
 ]

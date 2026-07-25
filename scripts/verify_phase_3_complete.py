@@ -47,6 +47,7 @@ reload(config_module)
 from app.db.connection import get_connection, init_db  # noqa: E402
 from app.domain.medical_history_types import MEDICAL_RECORD_TYPES  # noqa: E402
 from app.handlers.chat import chat  # noqa: E402
+from app.handlers.common import register_telegram_user  # noqa: E402
 from app.handlers.documents import handle_patient_file  # noqa: E402
 from app.repositories.conversation_repository import (  # noqa: E402
     get_last_messages,
@@ -63,6 +64,7 @@ from app.services.patient_context import build_profile_instructions  # noqa: E40
 from app.services.patient_file_service import link_patient_file_to_history  # noqa: E402
 from app.services.profile_extraction import extract_profile_updates  # noqa: E402
 from app.settings import get_settings  # noqa: E402
+from scripts.test_support import seed_default_location  # noqa: E402
 
 openai_requests: list[dict] = []
 
@@ -139,6 +141,8 @@ def simulate_restart(runner: TestRunner, label: str) -> None:
 async def run_chat(telegram_id: int, name: str, text: str) -> tuple[str, str]:
     out = StringIO()
     update = FakeUpdate(telegram_id, name, text)
+    user_id = register_telegram_user(update)
+    seed_default_location(user_id)
     with redirect_stdout(out):
         with patch(
             "app.services.openai_service.client.responses.create",

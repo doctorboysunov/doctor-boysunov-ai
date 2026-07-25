@@ -35,6 +35,8 @@ from app.safety.safety_layer import (  # noqa: E402
     reset_enforcement_count,
 )
 from app.services import openai_service  # noqa: E402
+from app.repositories.conversation_repository import upsert_user  # noqa: E402
+from scripts.test_support import seed_default_location  # noqa: E402
 
 
 class TestRunner:
@@ -126,6 +128,13 @@ async def run_ask_ai(text: str) -> str:
 def main() -> None:
     runner = TestRunner()
     init_db()
+    seed_default_location(
+        upsert_user(
+            telegram_id=FakeUser.id,
+            username=FakeUser.username,
+            full_name=FakeUser.full_name,
+        )
+    )
 
     # --- Module independence (8 tests) ---
     safety_src = (ROOT / "app" / "safety" / "safety_layer.py").read_text(encoding="utf-8")

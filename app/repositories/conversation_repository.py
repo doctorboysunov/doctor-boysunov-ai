@@ -133,6 +133,18 @@ def set_last_response_id(conversation_id: int, response_id: str) -> None:
     )
 
 
+def get_telegram_id_for_user(user_id: int) -> int | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT telegram_id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+    if row is None or row["telegram_id"] is None:
+        return None
+    return int(row["telegram_id"])
+
+
 def save_message(conversation_id: int, role: str, content: str) -> int:
     if role not in {"user", "assistant"}:
         raise ValueError(f"Invalid message role: {role}")

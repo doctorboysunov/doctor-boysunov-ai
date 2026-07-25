@@ -65,7 +65,9 @@ def extract_profile_updates(message: str) -> dict[str, Any]:
 
     region_match = re.search(r"(?i)men\s+([A-Za-zÀ-ÿ'-]+?)danman", text)
     if region_match:
-        updates["city_region"] = _clean_text(region_match.group(1))
+        region_value = _clean_text(region_match.group(1))
+        updates["city_region"] = region_value
+        updates["region"] = region_value
 
     address_patterns = [
         r"(?i)manzilim\s+(.+)",

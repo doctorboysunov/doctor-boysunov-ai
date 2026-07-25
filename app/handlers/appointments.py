@@ -1,0 +1,257 @@
+"""Structured appointment booking flow — no AI-generated times."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any
+
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from app.domain.appointment_status import DEFAULT_DOCTOR_NAME
+from app.repositories.appointment_repository import create_appointment
+from app.repositories.conversation_repository import save_message
+from app.repositories.patient_profile_repository import update_patient_profile
+from app.services.appointment_notifications import notify_admins_new_appointment
+
+logger = logging.getLogger("doctor_boysunov.appointments")
+
+BOOKING_STATE_KEY = "appointment_booking"
+
+BOOKING_TRIGGERS = (
+    "i want an appointment",
+    "navbat olmoqchiman",
+    "qabulga yoziling",
+)
+
+BOOKING_STEPS = (
+    "full_name",
+    "phone_number",
+    "appointment_date",
+    "appointment_time",
+    "complaint",
+    "confirm",
+)
+
+STEP_PROMPTS = {
+    "full_name": "Qabulga yozilish uchun to'liq ismingizni yozing:",
+    "phone_number": "Telefon raqamingizni yozing:",
+    "appointment_date": "Qaysi sanada qabulga kelmoqchisiz? (masalan: 2026-08-01)",
+    "appointment_time": "Qaysi vaqtda qabulga kelmoqchisiz? (masalan: 14:00)",
+    "complaint": "Asosiy shikoyatingizni qisqacha yozing:",
+}
+
+CONFIRM_YES = ("ha", "yes", "tasdiqlayman", "to'g'ri", "togri", "ok")
+CONFIRM_NO = ("yo'q", "yoq", "bekor", "cancel", "no")
+
+
+def is_booking_trigger(text: str) -> bool:
+    normalized = text.strip().lower()
+    return any(trigger in normalized for trigger in BOOKING_TRIGGERS)
+
+
+def _get_booking_state(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any] | None:
+    state = context.user_data.get(BOOKING_STATE_KEY)
+    if isinstance(state, dict):
+        return state
+    return None
+
+
+def _set_booking_state(context: ContextTypes.DEFAULT_TYPE, state: dict[str, Any]) -> None:
+    context.user_data[BOOKING_STATE_KEY] = state
+
+
+def _clear_booking_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop(BOOKING_STATE_KEY, None)
+
+
+def _start_booking(context: ContextTypes.DEFAULT_TYPE) -> str:
+    _set_booking_state(
+        context,
+        {
+            "step": "full_name",
+            "full_name": None,
+            "phone_number": None,
+            "appointment_date": None,
+            "appointment_time": None,
+            "complaint": None,
+        },
+    )
+    return STEP_PROMPTS["full_name"]
+
+
+def _build_confirmation_summary(booking: dict[str, Any]) -> str:
+    return (
+        "Qabul so'rovingiz:\n\n"
+        f"Shifokor: {DEFAULT_DOCTOR_NAME}\n"
+        f"Ism: {booking['full_name']}\n"
+        f"Telefon: {booking['phone_number']}\n"
+        f"Sana: {booking['appointment_date']}\n"
+        f"Vaqt: {booking['appointment_time']}\n"
+        f"Shikoyat: {booking['complaint']}\n\n"
+        "Ma'lumotlar to'g'rimi? Tasdiqlash uchun \"Ha\" yozing yoki bekor qilish uchun \"Bekor\"."
+    )
+
+
+def _normalize_answer(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip())
+
+
+def _is_yes(text: str) -> bool:
+    normalized = _normalize_answer(text).lower()
+    return normalized in CONFIRM_YES
+
+
+def _is_no(text: str) -> bool:
+    normalized = _normalize_answer(text).lower()
+    return normalized in CONFIRM_NO
+
+
+async def _reply_and_remember(
+    update: Update,
+    conversation_id: int,
+    text: str,
+) -> None:
+    save_message(conversation_id, "assistant", text)
+    await update.message.reply_text(text)
+
+
+async def handle_appointment_flow(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    user_id: int,
+    conversation_id: int,
+) -> bool:
+    if context is None or context.user_data is None:
+        return False
+
+    user_message = update.message.text
+    booking = _get_booking_state(context)
+
+    if booking is None:
+        if not is_booking_trigger(user_message):
+            return False
+        prompt = _start_booking(context)
+        save_message(conversation_id, "assistant", prompt)
+        await update.message.reply_text(prompt)
+        return True
+
+    step = booking.get("step")
+    answer = _normalize_answer(user_message)
+
+    if step != "confirm" and _is_no(answer):
+        _clear_booking_state(context)
+        reply = "Qabulga yozilish bekor qilindi. Yana yozmoqchi bo'lsangiz, \"Navbat olmoqchiman\" deb yozing."
+        await _reply_and_remember(update, conversation_id, reply)
+        return True
+
+    if step == "full_name":
+        if len(answer) < 2:
+            reply = "Iltimos, to'liq ismingizni yozing."
+            await _reply_and_remember(update, conversation_id, reply)
+            return True
+        booking["full_name"] = answer
+        booking["step"] = "phone_number"
+        _set_booking_state(context, booking)
+        await _reply_and_remember(update, conversation_id, STEP_PROMPTS["phone_number"])
+        return True
+
+    if step == "phone_number":
+        digits = re.sub(r"\D", "", answer)
+        if len(digits) < 9:
+            reply = "Iltimos, to'g'ri telefon raqamini yozing."
+            await _reply_and_remember(update, conversation_id, reply)
+            return True
+        booking["phone_number"] = answer
+        booking["step"] = "appointment_date"
+        _set_booking_state(context, booking)
+        await _reply_and_remember(update, conversation_id, STEP_PROMPTS["appointment_date"])
+        return True
+
+    if step == "appointment_date":
+        if len(answer) < 3:
+            reply = "Iltimos, afzal ko'rgan sanangizni yozing."
+            await _reply_and_remember(update, conversation_id, reply)
+            return True
+        booking["appointment_date"] = answer
+        booking["step"] = "appointment_time"
+        _set_booking_state(context, booking)
+        await _reply_and_remember(update, conversation_id, STEP_PROMPTS["appointment_time"])
+        return True
+
+    if step == "appointment_time":
+        if len(answer) < 2:
+            reply = "Iltimos, afzal ko'rgan vaqtingizni yozing."
+            await _reply_and_remember(update, conversation_id, reply)
+            return True
+        booking["appointment_time"] = answer
+        booking["step"] = "complaint"
+        _set_booking_state(context, booking)
+        await _reply_and_remember(update, conversation_id, STEP_PROMPTS["complaint"])
+        return True
+
+    if step == "complaint":
+        if len(answer) < 3:
+            reply = "Iltimos, shikoyatingizni qisqacha yozing."
+            await _reply_and_remember(update, conversation_id, reply)
+            return True
+        booking["complaint"] = answer
+        booking["step"] = "confirm"
+        _set_booking_state(context, booking)
+        summary = _build_confirmation_summary(booking)
+        await _reply_and_remember(update, conversation_id, summary)
+        return True
+
+    if step == "confirm":
+        if _is_yes(answer):
+            patient_profile = update_patient_profile(
+                user_id,
+                full_name=booking["full_name"],
+                phone_number=booking["phone_number"],
+            )
+            appointment = create_appointment(
+                patient_id=user_id,
+                doctor_name=DEFAULT_DOCTOR_NAME,
+                appointment_date=booking["appointment_date"],
+                appointment_time=booking["appointment_time"],
+                complaint=booking["complaint"],
+            )
+            bot = getattr(context, "bot", None)
+            if bot is not None:
+                await notify_admins_new_appointment(
+                    bot,
+                    appointment,
+                    patient_profile=patient_profile,
+                )
+            _clear_booking_state(context)
+            reply = (
+                "Qabul so'rovingiz qabul qilindi.\n\n"
+                f"So'rov raqami: {appointment['id']}\n"
+                f"Shifokor: {appointment['doctor_name']}\n"
+                f"Afzal ko'rgan sana: {appointment['appointment_date']}\n"
+                f"Afzal ko'rgan vaqt: {appointment['appointment_time']}\n"
+                f"Holat: {appointment['status']}\n\n"
+                "Klinika siz bilan bog'lanib, aniq vaqtni tasdiqlaydi."
+            )
+            await _reply_and_remember(update, conversation_id, reply)
+            logger.info(
+                "appointment_booked user_id=%s appointment_id=%s",
+                user_id,
+                appointment["id"],
+            )
+            return True
+
+        if _is_no(answer):
+            _clear_booking_state(context)
+            reply = "Qabulga yozilish bekor qilindi."
+            await _reply_and_remember(update, conversation_id, reply)
+            return True
+
+        reply = "Tasdiqlash uchun \"Ha\" yoki bekor qilish uchun \"Bekor\" deb yozing."
+        await _reply_and_remember(update, conversation_id, reply)
+        return True
+
+    _clear_booking_state(context)
+    return False

@@ -24,8 +24,11 @@ def reset_enforcement_count() -> None:
 def combine_instructions(
     *,
     profile_instructions: str | None,
+    receptionist_instructions: str | None = None,
 ) -> str:
     parts = [build_safety_instructions()]
+    if receptionist_instructions:
+        parts.append(receptionist_instructions)
     if profile_instructions:
         parts.append(profile_instructions)
     return "\n\n".join(parts)
