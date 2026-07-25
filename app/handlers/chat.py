@@ -9,7 +9,7 @@ from app.domain.conversation_mode import resolve_conversation_mode_with_reason
 from app.domain.patient_profile_fields import PROFILE_FIELDS
 from app.handlers.admin_conversation import handle_admin_chat_text
 from app.handlers.appointments import handle_appointment_flow
-from app.handlers.common import register_telegram_user
+from app.handlers.common import get_telegram_user_id, register_telegram_user
 from app.handlers.location import handle_location_registration_text
 from app.repositories.conversation_repository import (
     get_last_messages,
@@ -31,7 +31,11 @@ logger = logging.getLogger("doctor_boysunov.chat")
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
-    telegram_id = update.effective_user.id
+    telegram_id = get_telegram_user_id(update)
+    if telegram_id is None:
+        await update.message.reply_text("Foydalanuvchi aniqlanmadi.")
+        return
+
     mode, is_admin_user, admin_reason = resolve_conversation_mode_with_reason(telegram_id)
 
     logger.info(

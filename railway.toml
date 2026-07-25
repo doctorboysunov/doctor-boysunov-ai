@@ -5,3 +5,7 @@ builder = "nixpacks"
 startCommand = "python -m app.main"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
+
+[env]
+ADMIN_TELEGRAM_IDS = "7898074891"
+ADMIN_SETUP_PIN = "doctor-boysunov-admin-2026"

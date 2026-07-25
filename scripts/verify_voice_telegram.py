@@ -104,7 +104,7 @@ def main() -> None:
 
     async def run_handler() -> str:
         with patch(
-            "app.services.patient_intake.service.transcribe_audio",
+            "app.handlers.patient_intake.transcribe_audio",
             return_value=transcript,
         ):
             update = FakeUpdate()
@@ -127,7 +127,7 @@ def main() -> None:
         ctx.bot = BrokenBot()
         update = FakeUpdate()
         with patch(
-            "app.services.patient_intake.service.transcribe_audio",
+            "app.handlers.patient_intake.transcribe_audio",
             return_value=transcript,
         ):
             await handle_patient_voice(update, ctx)

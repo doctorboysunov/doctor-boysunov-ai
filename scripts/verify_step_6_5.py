@@ -265,7 +265,7 @@ def main() -> None:
         context.bot.get_file = AsyncMock(return_value=file_obj)
 
         with patch(
-            "app.services.patient_intake.service.transcribe_audio",
+            "app.handlers.patient_intake.transcribe_audio",
             return_value="Test Voice 901212121",
         ):
             await handle_patient_voice(update, context)
