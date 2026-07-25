@@ -1,7 +1,8 @@
-import os
-from dotenv import load_dotenv
+from app.settings import get_settings
 
-load_dotenv()
+_settings = get_settings()
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+BOT_TOKEN = _settings.telegram_bot_token
+OPENAI_API_KEY = _settings.openai_api_key
+OPENAI_MODEL = _settings.openai_model
+DATABASE_PATH = _settings.database_path
