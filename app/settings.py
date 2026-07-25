@@ -21,6 +21,10 @@ class Settings(BaseSettings):
         default="data/clinic.db",
         validation_alias="DATABASE_PATH",
     )
+    patient_files_path: str = Field(
+        default="data/patient_files",
+        validation_alias="PATIENT_FILES_PATH",
+    )
     openai_model: str = Field(
         default="gpt-5.5",
         validation_alias="OPENAI_MODEL",
@@ -29,6 +33,14 @@ class Settings(BaseSettings):
     @field_validator("database_path", mode="before")
     @classmethod
     def resolve_database_path(cls, value: str) -> str:
+        path = Path(value)
+        if path.is_absolute():
+            return str(path)
+        return str(PROJECT_ROOT / path)
+
+    @field_validator("patient_files_path", mode="before")
+    @classmethod
+    def resolve_patient_files_path(cls, value: str) -> str:
         path = Path(value)
         if path.is_absolute():
             return str(path)

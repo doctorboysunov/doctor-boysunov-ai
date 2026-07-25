@@ -5,6 +5,13 @@ from typing import Any
 from openai import OpenAI
 
 from app.config import OPENAI_API_KEY, OPENAI_MODEL
+from app.safety.instructions import build_safety_instructions
+from app.safety.safety_layer import (
+    combine_instructions,
+    enforce_safety,
+    extract_latest_user_message,
+)
+from app.services.patient_context import build_profile_instructions
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 logger = logging.getLogger("doctor_boysunov.openai")
@@ -36,7 +43,10 @@ def _build_input(messages: list[Message]) -> list[dict[str, Any]]:
     return api_messages
 
 
-def ask_ai(messages: str | list[Message]) -> str:
+def ask_ai(
+    messages: str | list[Message],
+    patient_profile: dict[str, Any] | None = None,
+) -> str:
     if isinstance(messages, str):
         history = [{"role": "user", "content": messages}]
     else:
@@ -50,15 +60,40 @@ def ask_ai(messages: str | list[Message]) -> str:
     else:
         api_input = _build_input(history)
 
+    profile_instructions = build_profile_instructions(patient_profile)
+    instructions = combine_instructions(profile_instructions=profile_instructions)
+
+    request_kwargs: dict[str, Any] = {
+        "model": OPENAI_MODEL,
+        "input": api_input,
+        "instructions": instructions,
+    }
+
+    user_message = extract_latest_user_message(history)
+
+    print("=== BEFORE OPENAI ===")
+    print(f"safety_instructions={json.dumps(build_safety_instructions(), ensure_ascii=False)}")
+    if profile_instructions:
+        print(f"patient_profile_context={json.dumps(profile_instructions, ensure_ascii=False)}")
+    else:
+        print("patient_profile_context=null")
+
     print("=== OPENAI REQUEST ===")
     print(f"model={OPENAI_MODEL}")
     print(f"input={json.dumps(api_input, ensure_ascii=False, indent=2)}")
 
-    response = client.responses.create(
-        model=OPENAI_MODEL,
-        input=api_input,
+    response = client.responses.create(**request_kwargs)
+    raw_output = response.output_text
+
+    print(f"openai_output={raw_output!r}")
+
+    safe_output, safety_meta = enforce_safety(
+        user_message=user_message,
+        ai_response=raw_output,
     )
 
-    print(f"openai_output={response.output_text!r}")
+    print("=== SAFETY LAYER ===")
+    print(f"safety_meta={json.dumps(safety_meta, ensure_ascii=False)}")
+    print(f"safe_output={safe_output!r}")
 
-    return response.output_text
+    return safe_output

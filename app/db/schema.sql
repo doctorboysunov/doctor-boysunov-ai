@@ -24,3 +24,70 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
     ON messages(conversation_id, id);
+
+CREATE TABLE IF NOT EXISTS patient_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+    full_name TEXT,
+    age INTEGER,
+    sex TEXT,
+    height_cm INTEGER,
+    weight_kg INTEGER,
+    phone_number TEXT,
+    city_region TEXT,
+    address TEXT,
+    occupation TEXT,
+    allergies TEXT,
+    chronic_diseases TEXT,
+    emergency_contact TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_patient_profiles_user_id
+    ON patient_profiles(user_id);
+
+CREATE TABLE IF NOT EXISTS medical_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    record_type TEXT NOT NULL CHECK (
+        record_type IN (
+            'symptom',
+            'diagnosis',
+            'mri',
+            'ct',
+            'emg',
+            'laboratory',
+            'treatment',
+            'consultation'
+        )
+    ),
+    content TEXT NOT NULL,
+    notes TEXT,
+    event_date TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_medical_history_user_id
+    ON medical_history(user_id, id);
+
+CREATE INDEX IF NOT EXISTS idx_medical_history_user_type
+    ON medical_history(user_id, record_type, id);
+
+CREATE TABLE IF NOT EXISTS patient_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    medical_history_id INTEGER NOT NULL REFERENCES medical_history(id),
+    file_name TEXT NOT NULL,
+    stored_path TEXT NOT NULL,
+    mime_type TEXT,
+    file_category TEXT NOT NULL CHECK (
+        file_category IN ('image', 'pdf', 'word', 'document')
+    ),
+    telegram_file_id TEXT,
+    caption TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_patient_files_user_id
+    ON patient_files(user_id, id);

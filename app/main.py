@@ -11,6 +11,7 @@ from app.config import BOT_TOKEN, DATABASE_PATH, OPENAI_MODEL
 from app.db.connection import get_connection, init_db
 from app.handlers.start import start
 from app.handlers.chat import chat
+from app.handlers.documents import handle_patient_file
 from app.logging_setup import LOG_FILE, setup_logging
 
 
@@ -34,9 +35,9 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, chat)
-    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_patient_file))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_patient_file))
 
     print(
         f"ClinicOS AI ishga tushdi... memory=ON commit={git_commit} "
