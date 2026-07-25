@@ -10,10 +10,7 @@ from app.domain.patient_profile_fields import PROFILE_FIELDS
 from app.handlers.appointments import handle_appointment_flow
 from app.handlers.common import get_telegram_user_id, register_telegram_user
 from app.handlers.location import handle_location_registration_text
-from app.handlers.patient_creation_handler import (
-    execute_patient_creation_from_text,
-    send_admin_idle_hint,
-)
+from app.handlers.patient_creation_handler import execute_patient_creation_from_text
 from app.repositories.conversation_repository import (
     get_last_messages,
     get_or_create_active_conversation,
@@ -40,18 +37,22 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     decision = resolve_incoming_message_flow(telegram_id, user_message)
+    logger.info(
+        "chat_route telegram_user_id=%s flow=%s is_admin=%s text=%r",
+        telegram_id,
+        decision.flow,
+        decision.is_admin,
+        user_message[:120],
+    )
 
     if decision.flow == "patient_creation":
         await execute_patient_creation_from_text(
             update,
+            context,
             text=user_message,
             source="telegram",
             telegram_id=telegram_id,
         )
-        return
-
-    if decision.flow == "admin_idle":
-        await send_admin_idle_hint(update)
         return
 
     user_id = register_telegram_user(update)
@@ -69,34 +70,42 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     patient_profile = get_or_create_patient_profile(user_id)
 
-    if await handle_location_registration_text(
+    if not decision.is_admin:
+        if await handle_location_registration_text(
+            update,
+            context,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            patient_profile=patient_profile,
+        ):
+            return
+
+        if await handle_appointment_flow(
+            update,
+            context,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        ):
+            return
+
+        if not has_location_stored(patient_profile):
+            return
+    elif await handle_appointment_flow(
         update,
         context,
         user_id=user_id,
         conversation_id=conversation_id,
-        patient_profile=patient_profile,
     ):
-        return
-
-    if await handle_appointment_flow(
-        update,
-        context,
-        user_id=user_id,
-        conversation_id=conversation_id,
-    ):
-        return
-
-    if not has_location_stored(patient_profile):
         return
 
     consultation = mark_consultation_flow(decision)
+    conversation_mode = "doctor_admin" if decision.is_admin else "patient"
     logger.info(
-        "conversation_flow telegram_user_id=%s selected_flow=%s reason=%s "
-        "patient_creation_triggered=%s",
+        "chat_medical_ai telegram_user_id=%s conversation_mode=%s flow=%s reason=%s",
         telegram_id,
+        conversation_mode,
         consultation.flow,
         consultation.reason,
-        consultation.patient_creation_triggered,
     )
 
     history = get_last_messages(conversation_id, limit=HISTORY_LIMIT)
@@ -110,9 +119,13 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "patient_profile="
         f"{json.dumps({k: patient_profile.get(k) for k in PROFILE_FIELDS}, ensure_ascii=False)}"
     )
-    print(f"conversation_flow={consultation.flow}")
+    print(f"conversation_mode={conversation_mode}")
 
-    answer = ask_ai(history, patient_profile=patient_profile, conversation_mode="patient")
+    answer = ask_ai(
+        history,
+        patient_profile=patient_profile,
+        conversation_mode=conversation_mode,
+    )
 
     save_message(conversation_id, "assistant", answer)
     await update.message.reply_text(answer)
