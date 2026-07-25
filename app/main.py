@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 
 from telegram.ext import (
@@ -64,6 +65,16 @@ async def handle_photo_message(update, context) -> None:
     await handle_patient_file(update, context)
 
 
+async def _log_handler_error(update: object, context) -> None:
+    err_logger = logging.getLogger("doctor_boysunov.telegram")
+    err_logger.exception("telegram_handler_error update=%r", update, exc_info=context.error)
+    message = getattr(update, "effective_message", None) if update else None
+    if message is not None:
+        await message.reply_text(
+            "Xatolik yuz berdi. Iltimos, qayta urinib ko'ring yoki matn ko'rinishida yuboring."
+        )
+
+
 def main():
     logger = setup_logging()
     init_db()
@@ -84,6 +95,7 @@ def main():
     logger.info("git_commit_sha=%s", git_commit)
 
     app = Application.builder().token(BOT_TOKEN).build()
+    app.add_error_handler(_log_handler_error)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myid", myid))
@@ -108,7 +120,7 @@ def main():
     app.add_handler(CommandHandler("dashboard_generate", admin_dashboard_generate))
     app.add_handler(CommandHandler("dashboard_send", admin_dashboard_send))
     app.add_handler(MessageHandler(filters.CONTACT, handle_patient_contact))
-    app.add_handler(MessageHandler(filters.VOICE, handle_patient_voice))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_patient_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     app.add_handler(MessageHandler(filters.LOCATION, handle_location_share))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo_message))

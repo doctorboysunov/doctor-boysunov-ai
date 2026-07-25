@@ -252,15 +252,23 @@ def main() -> None:
 
         update = FakeUpdate(FakeMessage())
         voice = MagicMock()
-        voice.get_file = AsyncMock(return_value=MagicMock(
-            download_as_bytearray=AsyncMock(return_value=bytearray(b"fake"))
-        ))
+        voice.file_id = "voice-test-id"
         update.message.voice = voice
+        update.message.audio = None
+
+        file_obj = MagicMock()
+        file_obj.file_path = "voice/test.oga"
+        file_obj.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake"))
+
+        context = FakeContext()
+        context.bot = MagicMock()
+        context.bot.get_file = AsyncMock(return_value=file_obj)
+
         with patch(
             "app.services.patient_intake.service.transcribe_audio",
             return_value="Test Voice 901212121",
         ):
-            await handle_patient_voice(update, FakeContext())
+            await handle_patient_voice(update, context)
         return update.message.reply_text.await_args.args[0]
 
     voice_reply = asyncio.run(run_voice_handler())

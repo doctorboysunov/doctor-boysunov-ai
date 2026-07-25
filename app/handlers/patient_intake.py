@@ -7,13 +7,21 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.domain.conversation_mode import is_doctor_admin_mode
+from app.domain.conversation_mode import is_doctor_admin_mode, resolve_conversation_mode_with_reason
 from app.services.patient_creation_engine import (
     create_patient_intelligently,
     format_admin_creation_confirmation,
 )
 
 logger = logging.getLogger("doctor_boysunov.patient_intake_handlers")
+
+
+async def _download_telegram_file(context: ContextTypes.DEFAULT_TYPE, file_id: str) -> bytes:
+    telegram_file = await context.bot.get_file(file_id)
+    if not telegram_file.file_path:
+        raise RuntimeError("Telegram getFile returned empty file_path")
+    data = await telegram_file.download_as_bytearray()
+    return bytes(data)
 
 
 async def handle_patient_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -50,33 +58,97 @@ async def handle_patient_contact(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_patient_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
-    if message is None or message.voice is None:
+    if message is None:
+        logger.warning("voice_update_missing_message")
         return
 
     user = update.effective_user
-    if not is_doctor_admin_mode(user.id):
+    telegram_id = user.id if user else 0
+    mode, is_admin_user, admin_reason = resolve_conversation_mode_with_reason(telegram_id)
+
+    voice = message.voice
+    audio = message.audio
+    media = voice or audio
+    media_kind = "voice" if voice is not None else "audio" if audio is not None else None
+
+    logger.info(
+        "incoming_voice telegram_user_id=%s is_admin=%s selected_mode=%s reason=%s "
+        "has_voice=%s has_audio=%s file_id=%s",
+        telegram_id,
+        is_admin_user,
+        mode,
+        admin_reason,
+        voice is not None,
+        audio is not None,
+        media.file_id if media is not None else None,
+    )
+
+    if media is None:
+        logger.warning("voice_update_no_media telegram_user_id=%s", telegram_id)
+        await message.reply_text("Ovozli xabar topilmadi. Iltimos, qayta yuboring.")
+        return
+
+    if not is_admin_user:
         await message.reply_text(
             "Ovozli xabar qabul qilindi. Iltimos, shikoyatingizni matn ko'rinishida yozing."
         )
         return
 
-    voice = message.voice
-    telegram_file = await voice.get_file()
-    audio_bytes = bytes(await telegram_file.download_as_bytearray())
-
-    result = create_patient_intelligently(
-        source="voice",
-        audio_bytes=audio_bytes,
-        telegram_id=None,
-        username=None,
-    )
-    if result is None:
+    try:
+        audio_bytes = await _download_telegram_file(context, media.file_id)
+        logger.info(
+            "voice_download_ok telegram_user_id=%s kind=%s bytes=%s",
+            telegram_id,
+            media_kind,
+            len(audio_bytes),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "voice_download_failed telegram_user_id=%s kind=%s error=%s",
+            telegram_id,
+            media_kind,
+            exc,
+        )
         await message.reply_text(
-            "Ovozli xabardan ism va telefon raqamini aniqlab bo'lmadi."
+            "Ovozli faylni yuklab bo'lmadi. Iltimos, qayta yuboring yoki matn ko'rinishida yozing."
         )
         return
 
-    await message.reply_text(format_admin_creation_confirmation(result))
+    try:
+        result = create_patient_intelligently(
+            source="voice",
+            audio_bytes=audio_bytes,
+            telegram_id=None,
+            username=None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "voice_processing_failed telegram_user_id=%s error=%s",
+            telegram_id,
+            exc,
+        )
+        await message.reply_text(
+            "Ovozni tanib bo'lmadi. Iltimos, aniqroq ayting yoki matn ko'rinishida yuboring:\n"
+            "Ali Valiyev 701041101"
+        )
+        return
+
+    if result is None:
+        logger.warning("voice_patient_not_extracted telegram_user_id=%s", telegram_id)
+        await message.reply_text(
+            "Ovozli xabardan ism va telefon raqamini aniqlab bo'lmadi.\n"
+            "Masalan: \"Ali Valiyev, telefon 701041101\""
+        )
+        return
+
+    confirmation = format_admin_creation_confirmation(result)
+    logger.info(
+        "voice_patient_processed telegram_user_id=%s patient_id=%s created=%s",
+        telegram_id,
+        result.patient_id,
+        result.created,
+    )
+    await message.reply_text(confirmation)
 
 
 async def try_capture_from_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -89,8 +161,11 @@ async def try_capture_from_photo(update: Update, context: ContextTypes.DEFAULT_T
         return False
 
     photo = message.photo[-1]
-    telegram_file = await photo.get_file()
-    image_bytes = bytes(await telegram_file.download_as_bytearray())
+    try:
+        image_bytes = await _download_telegram_file(context, photo.file_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("photo_download_failed telegram_user_id=%s", user.id)
+        return False
 
     result = create_patient_intelligently(
         source="ocr",

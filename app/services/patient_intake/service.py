@@ -173,12 +173,23 @@ def capture_patient_from_voice(
     username: str | None = None,
 ) -> CaptureResult | None:
     transcript = transcribe_audio(audio_bytes)
-    return capture_patient_from_text(
-        transcript,
+    logger.info("voice_transcript=%r", transcript)
+    extracted = extract_patient_from_text(transcript)
+    if extracted is None:
+        extracted = extract_patient_with_ai(transcript)
+    if extracted is None:
+        logger.warning("voice_extraction_failed transcript=%r", transcript)
+        return None
+    logger.info(
+        "voice_extracted name=%r phone=%r",
+        extracted.full_name,
+        extracted.phone_number,
+    )
+    return _save_or_return_existing(
+        extracted,
         source=source,
         telegram_id=telegram_id,
         username=username,
-        use_ai=True,
     )
 
 
