@@ -31,9 +31,11 @@ reload(app_settings)
 reload(app_config)
 
 from app.db.connection import get_connection, init_db  # noqa: E402
+from app.domain.conversation_flow import resolve_incoming_message_flow  # noqa: E402
 from app.domain.conversation_mode import resolve_conversation_mode  # noqa: E402
 from app.handlers.admin_conversation import handle_admin_chat_text  # noqa: E402
 from app.handlers.chat import chat  # noqa: E402
+from app.services.patient_intake.extraction import extract_patient_from_text  # noqa: E402
 from app.handlers.patient_intake import handle_patient_contact  # noqa: E402
 from app.repositories.conversation_repository import upsert_user  # noqa: E402
 from app.repositories.patient_intake_repository import find_patient_by_phone  # noqa: E402
@@ -207,13 +209,49 @@ def main() -> None:
     _, kwargs = ask_ai_mock.call_args
     runner.eq("patient_conversation_mode", kwargs.get("conversation_mode"), "patient")
 
-    with patch("app.handlers.chat.handle_admin_chat_text", AsyncMock(return_value=True)) as admin_handler:
-        async def admin_chat_route() -> None:
-            update = FakeUpdate(FakeUser(888001), FakeMessage(text="Test 901111111"))
-            await chat(update, FakeContext())
+    plus998 = "Ali Valiyev +998701041101"
+    extracted_plus998 = extract_patient_from_text(plus998)
+    runner.check("plus998_extracts", extracted_plus998 is not None, repr(extracted_plus998))
+    if extracted_plus998:
+        runner.eq("plus998_name", extracted_plus998.full_name, "Ali Valiyev")
+        runner.eq("plus998_phone", extracted_plus998.phone_number, "+998701041101")
 
-        asyncio.run(admin_chat_route())
-    runner.true("admin_chat_routed", admin_handler.await_count == 1)
+    admin_flow = resolve_incoming_message_flow(888001, plus998)
+    runner.eq("admin_plus998_flow", admin_flow.flow, "patient_creation")
+    runner.eq("admin_plus998_reason", admin_flow.reason, "priority_1_admin_name_phone_or_clinical_form")
+    runner.true("admin_plus998_triggers_creation", admin_flow.patient_creation_triggered)
+
+    admin_idle_flow = resolve_incoming_message_flow(888001, "Salom")
+    runner.eq("admin_idle_flow", admin_idle_flow.flow, "admin_idle")
+    runner.eq("admin_idle_reason", admin_idle_flow.reason, "priority_2_admin_mode_skip_registration")
+
+    patient_flow = resolve_incoming_message_flow(777001, plus998)
+    runner.eq("patient_name_phone_flow", patient_flow.flow, "patient_registration")
+    runner.false = lambda name, value: runner.check(name, not value, repr(value))
+    runner.false("patient_no_creation_trigger", patient_flow.patient_creation_triggered)
+
+    with patch(
+        "app.handlers.chat.execute_patient_creation_from_text",
+        AsyncMock(return_value=True),
+    ) as patient_create:
+        with patch("app.handlers.chat.handle_location_registration_text", AsyncMock(return_value=False)):
+            async def admin_chat_route() -> None:
+                update = FakeUpdate(FakeUser(888001), FakeMessage(text=plus998))
+                await chat(update, FakeContext())
+
+            asyncio.run(admin_chat_route())
+    runner.true("admin_chat_patient_creation", patient_create.await_count == 1)
+    _, kwargs = patient_create.await_args
+    runner.eq("admin_chat_text", kwargs.get("text"), plus998)
+
+    with patch("app.handlers.chat.execute_patient_creation_from_text", AsyncMock(return_value=True)):
+        with patch("app.handlers.chat.send_admin_idle_hint", AsyncMock()) as idle_hint:
+            async def admin_no_registration() -> None:
+                update = FakeUpdate(FakeUser(888001), FakeMessage(text="Salom"))
+                await chat(update, FakeContext())
+
+            asyncio.run(admin_no_registration())
+    runner.true("admin_never_registration", idle_hint.await_count == 1)
 
     async def patient_contact_blocked() -> str:
         update = FakeUpdate(FakeUser(777003), FakeMessage(contact=FakeContact()))

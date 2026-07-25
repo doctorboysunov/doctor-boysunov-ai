@@ -7,12 +7,17 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.domain.conversation_mode import is_doctor_admin_mode, resolve_conversation_mode_with_reason
+from app.domain.conversation_flow import resolve_incoming_message_flow
 from app.handlers.common import get_telegram_user_id
+from app.handlers.patient_creation_handler import (
+    execute_patient_creation_from_text,
+    send_admin_idle_hint,
+)
 from app.services.patient_creation_engine import (
     create_patient_intelligently,
     format_admin_creation_confirmation,
 )
+from app.domain.conversation_mode import is_doctor_admin_mode
 from app.services.patient_intake.transcribe import transcribe_audio
 
 logger = logging.getLogger("doctor_boysunov.patient_intake_handlers")
@@ -24,6 +29,50 @@ async def _download_telegram_file(context: ContextTypes.DEFAULT_TYPE, file_id: s
         raise RuntimeError("Telegram getFile returned empty file_path")
     data = await telegram_file.download_as_bytearray()
     return bytes(data)
+
+
+async def _route_transcribed_text(
+    update: Update,
+    *,
+    transcript: str,
+    source: str,
+    telegram_id: int,
+) -> None:
+    """Apply the same routing rules as text messages after voice transcription."""
+    message = update.message
+    if message is None:
+        return
+
+    decision = resolve_incoming_message_flow(telegram_id, transcript)
+    logger.info(
+        "voice_routing transcript=%r selected_flow=%s reason=%s patient_creation_triggered=%s",
+        transcript,
+        decision.flow,
+        decision.reason,
+        decision.patient_creation_triggered,
+    )
+    print(
+        f"=== VOICE ROUTING ===\n"
+        f"transcript={transcript!r} selected_flow={decision.flow} "
+        f"reason={decision.reason} patient_creation_triggered={decision.patient_creation_triggered}"
+    )
+
+    if decision.flow == "patient_creation":
+        await execute_patient_creation_from_text(
+            update,
+            text=transcript,
+            source=source,
+            telegram_id=telegram_id,
+        )
+        return
+
+    if decision.flow == "admin_idle":
+        await send_admin_idle_hint(update)
+        return
+
+    await message.reply_text(
+        "Ovozli xabar qabul qilindi. Iltimos, shikoyatingizni matn ko'rinishida yozing."
+    )
 
 
 async def handle_patient_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -70,20 +119,14 @@ async def handle_patient_voice(update: Update, context: ContextTypes.DEFAULT_TYP
         await message.reply_text("Foydalanuvchi aniqlanmadi. Iltimos, qayta yuboring.")
         return
 
-    mode, is_admin_user, admin_reason = resolve_conversation_mode_with_reason(telegram_id)
-
     voice = message.voice
     audio = message.audio
     media = voice or audio
     media_kind = "voice" if voice is not None else "audio" if audio is not None else None
 
     logger.info(
-        "incoming_voice telegram_user_id=%s is_admin=%s selected_mode=%s reason=%s "
-        "has_voice=%s has_audio=%s file_id=%s",
+        "incoming_voice telegram_user_id=%s has_voice=%s has_audio=%s file_id=%s",
         telegram_id,
-        is_admin_user,
-        mode,
-        admin_reason,
         voice is not None,
         audio is not None,
         media.file_id if media is not None else None,
@@ -92,12 +135,6 @@ async def handle_patient_voice(update: Update, context: ContextTypes.DEFAULT_TYP
     if media is None:
         logger.warning("voice_update_no_media telegram_user_id=%s", telegram_id)
         await message.reply_text("Ovozli xabar topilmadi. Iltimos, qayta yuboring.")
-        return
-
-    if mode != "doctor_admin":
-        await message.reply_text(
-            "Ovozli xabar qabul qilindi. Iltimos, shikoyatingizni matn ko'rinishida yozing."
-        )
         return
 
     try:
@@ -141,48 +178,12 @@ async def handle_patient_voice(update: Update, context: ContextTypes.DEFAULT_TYP
         transcript,
     )
 
-    try:
-        result = create_patient_intelligently(
-            source="voice",
-            text=transcript,
-            telegram_id=None,
-            username=None,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception(
-            "voice_patient_creation_failed telegram_user_id=%s transcript=%r error=%s",
-            telegram_id,
-            transcript,
-            exc,
-        )
-        await message.reply_text(
-            "Bemor yaratishda xatolik. Iltimos, matn ko'rinishida yuboring:\n"
-            "Ali Valiyev 701041101"
-        )
-        return
-
-    if result is None:
-        logger.warning(
-            "voice_patient_not_extracted telegram_user_id=%s transcript=%r",
-            telegram_id,
-            transcript,
-        )
-        await message.reply_text(
-            "Ovozli xabardan ism va telefon raqamini aniqlab bo'lmadi.\n"
-            f"Tanilgan matn: {transcript}\n"
-            "Masalan: \"Ali Valiyev, telefon 701041101\""
-        )
-        return
-
-    confirmation = format_admin_creation_confirmation(result)
-    logger.info(
-        "voice_patient_processed telegram_user_id=%s patient_id=%s created=%s transcript=%r",
-        telegram_id,
-        result.patient_id,
-        result.created,
-        transcript,
+    await _route_transcribed_text(
+        update,
+        transcript=transcript,
+        source="voice",
+        telegram_id=telegram_id,
     )
-    await message.reply_text(confirmation)
 
 
 async def try_capture_from_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:

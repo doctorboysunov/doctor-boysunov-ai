@@ -2,26 +2,15 @@
 
 from __future__ import annotations
 
-import logging
-
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.services.patient_creation_engine import (
-    PatientCreationResult,
-    create_patient_intelligently,
-    format_admin_creation_confirmation,
+from app.handlers.common import get_telegram_user_id
+from app.handlers.patient_creation_handler import (
+    execute_patient_creation_from_text,
+    send_admin_idle_hint,
 )
-from app.services.patient_intake.clinical_form import is_clinical_form_text
 from app.services.patient_intake.extraction import extract_patient_from_text
-from app.services.patient_intake.service import capture_clinical_form
-
-logger = logging.getLogger("doctor_boysunov.admin_conversation")
-
-ADMIN_HINT = (
-    "Bemor qo'shish uchun ism va telefon yuboring.\n"
-    "Masalan: Ali Valiyev 901234567"
-)
 
 
 async def handle_admin_chat_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -30,51 +19,18 @@ async def handle_admin_chat_text(update: Update, context: ContextTypes.DEFAULT_T
     if message is None or not message.text:
         return False
 
+    telegram_id = get_telegram_user_id(update)
+    if telegram_id is None:
+        return False
+
     text = message.text
-
-    if is_clinical_form_text(text):
-        result = capture_clinical_form(text, source="telegram", telegram_id=None)
-        if result is None:
-            return False
-
-        await message.reply_text(
-            format_admin_creation_confirmation(
-                PatientCreationResult(
-                    patient_id=result.patient_id,
-                    full_name=result.full_name,
-                    phone_number=result.phone_number,
-                    created=result.created,
-                    source=result.source,
-                    treatment_id=None,
-                    treatment_started=False,
-                    medical_record_id=None,
-                    follow_up_count=0,
-                    follow_up_dates=(),
-                    duplicate_prevented=not result.created,
-                )
-            )
-        )
-        return True
-
     if extract_patient_from_text(text) is None:
-        await message.reply_text(ADMIN_HINT)
+        await send_admin_idle_hint(update)
         return True
 
-    result = create_patient_intelligently(
-        source="telegram",
+    return await execute_patient_creation_from_text(
+        update,
         text=text,
-        telegram_id=None,
-        username=None,
+        source="telegram",
+        telegram_id=telegram_id,
     )
-    if result is None:
-        await message.reply_text("Ism yoki telefonni o'qib bo'lmadi.")
-        return True
-
-    await message.reply_text(format_admin_creation_confirmation(result))
-    logger.info(
-        "admin_patient_created patient_id=%s created=%s by_admin=%s",
-        result.patient_id,
-        result.created,
-        update.effective_user.id,
-    )
-    return True

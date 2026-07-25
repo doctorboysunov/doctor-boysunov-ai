@@ -13,6 +13,12 @@ logger = logging.getLogger("doctor_boysunov.admin_auth")
 def get_all_admin_telegram_ids() -> tuple[int, ...]:
     db_ids = list_admin_telegram_ids()
     combined = set(ADMIN_TELEGRAM_IDS) | set(db_ids)
+    if not combined and ADMIN_TELEGRAM_IDS:
+        from app.repositories.admin_repository import seed_admin_ids_from_env
+
+        seed_admin_ids_from_env(ADMIN_TELEGRAM_IDS)
+        db_ids = list_admin_telegram_ids()
+        combined = set(ADMIN_TELEGRAM_IDS) | set(db_ids)
     return tuple(sorted(combined))
 
 
