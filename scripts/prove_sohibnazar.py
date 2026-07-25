@@ -88,7 +88,7 @@ async def main() -> None:
 
     turn2_before = out2.getvalue().split("=== OPENAI REQUEST ===")[0]
     count_match = re.search(r"history_count=(\d+)", turn2_before)
-    loaded_count = int(count_match.group(1)) if count_match else len(history_turn2)
+    loaded_count = int(count_match.group(1)) if count_match else len(history)
 
     print("TURN 2 answer:", answer2)
     print(out2.getvalue())
