@@ -1,4 +1,4 @@
-"""Conversation flow routing with explicit priority rules."""
+"""Conversation flow routing with explicit priority rules and trace logging."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ from typing import Literal
 from app.domain.conversation_mode import resolve_conversation_mode_with_reason
 from app.services.patient_intake.clinical_form import is_clinical_form_text
 from app.services.patient_intake.extraction import extract_patient_from_text
+from app.services.routing_trace import RoutingTrace
 
 logger = logging.getLogger("doctor_boysunov.conversation_flow")
 
 FlowName = Literal[
     "patient_creation",
-    "admin_idle",
-    "patient_registration",
     "patient_consultation",
+    "patient_registration",
 ]
 
 
@@ -34,17 +34,44 @@ class FlowDecision:
 def resolve_incoming_message_flow(
     telegram_id: int,
     text: str | None,
+    *,
+    trace: RoutingTrace | None = None,
 ) -> FlowDecision:
-    """Apply routing priority: name+phone intake, admin guard, then patient registration."""
+    """Route message flow. Admin normal text always continues to Medical AI."""
     mode, is_admin, admin_reason = resolve_conversation_mode_with_reason(telegram_id)
     normalized = (text or "").strip()
+
+    if trace is not None:
+        trace.consider("conversation_flow.resolve_incoming_message_flow")
+        trace.check(
+            location="conversation_flow.py",
+            condition="is_admin",
+            result=is_admin,
+            detail=f"mode={mode} admin_reason={admin_reason}",
+        )
 
     clinical_form = bool(normalized and is_clinical_form_text(normalized))
     extracted = extract_patient_from_text(normalized) if normalized else None
     patient_intake_detected = extracted is not None or clinical_form
 
-    # Priority 1 — name + phone (or clinical form) → patient creation for admin.
-    if is_admin and patient_intake_detected:
+    if trace is not None:
+        trace.check(
+            location="conversation_flow.py",
+            condition="patient_intake_detected (name+phone or clinical form)",
+            result=patient_intake_detected,
+            detail=f"clinical_form={clinical_form} extracted={extracted is not None}",
+        )
+
+    priority1 = is_admin and patient_intake_detected
+    if trace is not None:
+        trace.check(
+            location="conversation_flow.py",
+            condition="priority_1: is_admin AND patient_intake_detected",
+            result=priority1,
+            detail="routes to patient_creation when True",
+        )
+
+    if priority1:
         decision = FlowDecision(
             flow="patient_creation",
             reason="priority_1_admin_name_phone_or_clinical_form",
@@ -54,24 +81,42 @@ def resolve_incoming_message_flow(
             patient_creation_triggered=True,
             clinical_form_detected=clinical_form,
         )
+        if trace is not None:
+            trace.select("patient_creation_handler", decision.reason)
         _log_decision(telegram_id, normalized, decision)
         return decision
 
-    # Priority 2 — admin never enters registration / receptionist onboarding.
+    if trace is not None:
+        trace.check(
+            location="conversation_flow.py",
+            condition="priority_2: is_admin (normal conversation)",
+            result=is_admin,
+            detail="admin_idle REMOVED — admin normal text falls through to Medical AI",
+        )
+
     if is_admin:
         decision = FlowDecision(
-            flow="admin_idle",
-            reason="priority_2_admin_mode_skip_registration",
+            flow="patient_consultation",
+            reason="admin_normal_message_medical_ai",
             is_admin=True,
             admin_reason=admin_reason,
             patient_intake_detected=False,
             patient_creation_triggered=False,
             clinical_form_detected=False,
         )
+        if trace is not None:
+            trace.select("Medical AI (ask_ai)", decision.reason)
         _log_decision(telegram_id, normalized, decision)
         return decision
 
-    # Priority 3 — patient self-registration and consultation.
+    if trace is not None:
+        trace.check(
+            location="conversation_flow.py",
+            condition="priority_3: patient (non-admin)",
+            result=True,
+            detail="patient self-registration path",
+        )
+
     decision = FlowDecision(
         flow="patient_registration",
         reason="priority_3_patient_self_registration",
@@ -81,6 +126,8 @@ def resolve_incoming_message_flow(
         patient_creation_triggered=False,
         clinical_form_detected=False,
     )
+    if trace is not None:
+        trace.select("patient_registration / location / AI chain", decision.reason)
     _log_decision(telegram_id, normalized, decision)
     return decision
 

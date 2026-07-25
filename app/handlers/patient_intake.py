@@ -7,17 +7,14 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.domain.conversation_flow import resolve_incoming_message_flow
+from app.domain.conversation_mode import is_doctor_admin_mode
+from app.handlers.chat import process_text_message
 from app.handlers.common import get_telegram_user_id
-from app.handlers.patient_creation_handler import (
-    execute_patient_creation_from_text,
-    send_admin_idle_hint,
-)
+from app.handlers.patient_creation_handler import NORMAL_AI_HINT
 from app.services.patient_creation_engine import (
     create_patient_intelligently,
     format_admin_creation_confirmation,
 )
-from app.domain.conversation_mode import is_doctor_admin_mode
 from app.services.patient_intake.transcribe import transcribe_audio
 
 logger = logging.getLogger("doctor_boysunov.patient_intake_handlers")
@@ -33,45 +30,16 @@ async def _download_telegram_file(context: ContextTypes.DEFAULT_TYPE, file_id: s
 
 async def _route_transcribed_text(
     update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
     *,
     transcript: str,
     source: str,
-    telegram_id: int,
 ) -> None:
-    """Apply the same routing rules as text messages after voice transcription."""
-    message = update.message
-    if message is None:
-        return
-
-    decision = resolve_incoming_message_flow(telegram_id, transcript)
-    logger.info(
-        "voice_routing transcript=%r selected_flow=%s reason=%s patient_creation_triggered=%s",
+    await process_text_message(
+        update,
+        context,
         transcript,
-        decision.flow,
-        decision.reason,
-        decision.patient_creation_triggered,
-    )
-    print(
-        f"=== VOICE ROUTING ===\n"
-        f"transcript={transcript!r} selected_flow={decision.flow} "
-        f"reason={decision.reason} patient_creation_triggered={decision.patient_creation_triggered}"
-    )
-
-    if decision.flow == "patient_creation":
-        await execute_patient_creation_from_text(
-            update,
-            text=transcript,
-            source=source,
-            telegram_id=telegram_id,
-        )
-        return
-
-    if decision.flow == "admin_idle":
-        await send_admin_idle_hint(update)
-        return
-
-    await message.reply_text(
-        "Ovozli xabar qabul qilindi. Iltimos, shikoyatingizni matn ko'rinishida yozing."
+        entry_handler=f"patient_intake.py::handle_patient_voice ({source})",
     )
 
 
@@ -104,7 +72,7 @@ async def handle_patient_contact(update: Update, context: ContextTypes.DEFAULT_T
         await message.reply_text("Kontaktdan ism yoki telefonni o'qib bo'lmadi.")
         return
 
-    await message.reply_text(format_admin_creation_confirmation(result))
+    await message.reply_text(format_admin_creation_confirmation(result) + "\n\n" + NORMAL_AI_HINT)
 
 
 async def handle_patient_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -139,12 +107,6 @@ async def handle_patient_voice(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         audio_bytes = await _download_telegram_file(context, media.file_id)
-        logger.info(
-            "voice_download_ok telegram_user_id=%s kind=%s bytes=%s",
-            telegram_id,
-            media_kind,
-            len(audio_bytes),
-        )
     except Exception as exc:  # noqa: BLE001
         logger.exception(
             "voice_download_failed telegram_user_id=%s kind=%s error=%s",
@@ -167,8 +129,7 @@ async def handle_patient_voice(update: Update, context: ContextTypes.DEFAULT_TYP
             exc,
         )
         await message.reply_text(
-            "Ovozni tanib bo'lmadi. Iltimos, aniqroq ayting yoki matn ko'rinishida yuboring:\n"
-            "Ali Valiyev 701041101"
+            "Ovozni tanib bo'lmadi. Iltimos, aniqroq ayting yoki matn ko'rinishida yuboring."
         )
         return
 
@@ -180,9 +141,9 @@ async def handle_patient_voice(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await _route_transcribed_text(
         update,
+        context,
         transcript=transcript,
         source="voice",
-        telegram_id=telegram_id,
     )
 
 
@@ -212,5 +173,5 @@ async def try_capture_from_photo(update: Update, context: ContextTypes.DEFAULT_T
     if result is None:
         return False
 
-    await message.reply_text(format_admin_creation_confirmation(result))
+    await message.reply_text(format_admin_creation_confirmation(result) + "\n\n" + NORMAL_AI_HINT)
     return True

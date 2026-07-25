@@ -23,6 +23,7 @@ from app.repositories.patient_profile_repository import (
 from app.services.location_profile import has_location_stored
 from app.services.openai_service import ask_ai
 from app.services.profile_extraction import extract_profile_updates
+from app.services.routing_trace import ROUTING_FIX_VERSION, RoutingTrace
 
 HISTORY_LIMIT = 10
 
@@ -30,22 +31,73 @@ logger = logging.getLogger("doctor_boysunov.chat")
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
+    message = update.message
+    if message is None or not message.text:
+        return
+    await process_text_message(
+        update,
+        context,
+        message.text,
+        entry_handler="chat.py::chat (MessageHandler TEXT)",
+    )
+
+
+async def process_text_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_message: str,
+    *,
+    entry_handler: str,
+) -> None:
     telegram_id = get_telegram_user_id(update)
+
+    trace = RoutingTrace(
+        telegram_id=telegram_id or 0,
+        text=user_message or "",
+        entry_handler=entry_handler,
+    )
+    trace.consider("main.py MessageHandler(filters.TEXT & ~filters.COMMAND)")
+
     if telegram_id is None:
+        trace.check(
+            location="chat.py",
+            condition="telegram_id is not None",
+            result=False,
+            detail="abort — user unknown",
+        )
+        trace.select("chat.py early exit", "telegram_id missing")
+        trace.dump()
         await update.message.reply_text("Foydalanuvchi aniqlanmadi.")
         return
 
-    decision = resolve_incoming_message_flow(telegram_id, user_message)
+    trace.check(
+        location="chat.py",
+        condition="telegram_id is not None",
+        result=True,
+        detail=f"telegram_id={telegram_id}",
+    )
+
+    decision = resolve_incoming_message_flow(telegram_id, user_message, trace=trace)
     logger.info(
-        "chat_route telegram_user_id=%s flow=%s is_admin=%s text=%r",
+        "chat_route telegram_user_id=%s flow=%s is_admin=%s routing_fix=%s text=%r",
         telegram_id,
         decision.flow,
         decision.is_admin,
+        ROUTING_FIX_VERSION,
         user_message[:120],
     )
 
-    if decision.flow == "patient_creation":
+    is_patient_creation = decision.flow == "patient_creation"
+    trace.check(
+        location="chat.py",
+        condition="decision.flow == 'patient_creation'",
+        result=is_patient_creation,
+        detail=f"flow={decision.flow}",
+    )
+
+    if is_patient_creation:
+        trace.select("execute_patient_creation_from_text", decision.reason)
+        trace.dump()
         await execute_patient_creation_from_text(
             update,
             context,
@@ -55,6 +107,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    trace.consider("register_telegram_user + conversation persistence")
     user_id = register_telegram_user(update)
     conversation_id = get_or_create_active_conversation(user_id)
     save_message(conversation_id, "user", user_message)
@@ -71,54 +124,102 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     patient_profile = get_or_create_patient_profile(user_id)
 
     if not decision.is_admin:
-        if await handle_location_registration_text(
+        trace.consider("handle_location_registration_text (patient only)")
+        location_handled = await handle_location_registration_text(
             update,
             context,
             user_id=user_id,
             conversation_id=conversation_id,
             patient_profile=patient_profile,
-        ):
+        )
+        trace.check(
+            location="chat.py",
+            condition="not is_admin AND handle_location_registration_text returned True",
+            result=location_handled,
+            detail="patient location onboarding",
+        )
+        if location_handled:
+            trace.select("location_registration_handler", "patient location step handled message")
+            trace.skip_medical_ai("location registration handler returned early")
+            trace.dump()
             return
 
-        if await handle_appointment_flow(
+        appt_handled = await handle_appointment_flow(
             update,
             context,
             user_id=user_id,
             conversation_id=conversation_id,
-        ):
+        )
+        trace.check(
+            location="chat.py",
+            condition="not is_admin AND handle_appointment_flow returned True",
+            result=appt_handled,
+            detail="patient appointment booking",
+        )
+        if appt_handled:
+            trace.select("appointment_booking_handler", "appointment flow handled message")
+            trace.skip_medical_ai("appointment handler returned early")
+            trace.dump()
             return
 
-        if not has_location_stored(patient_profile):
+        has_location = has_location_stored(patient_profile)
+        trace.check(
+            location="chat.py",
+            condition="not is_admin AND has_location_stored(patient_profile)",
+            result=has_location,
+            detail="patient must share location before AI",
+        )
+        if not has_location:
+            trace.select("location_gate", "patient has no location — silent return")
+            trace.skip_medical_ai("patient location not stored yet")
+            trace.dump()
             return
-    elif await handle_appointment_flow(
-        update,
-        context,
-        user_id=user_id,
-        conversation_id=conversation_id,
-    ):
-        return
+    else:
+        trace.check(
+            location="chat.py",
+            condition="is_admin — skip location gate",
+            result=True,
+            detail="admin messages never blocked by location registration",
+        )
+        appt_handled = await handle_appointment_flow(
+            update,
+            context,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        trace.check(
+            location="chat.py",
+            condition="is_admin AND handle_appointment_flow returned True",
+            result=appt_handled,
+            detail="optional admin appointment flow",
+        )
+        if appt_handled:
+            trace.select("appointment_booking_handler", "admin appointment flow handled message")
+            trace.skip_medical_ai("appointment handler returned early")
+            trace.dump()
+            return
 
     consultation = mark_consultation_flow(decision)
     conversation_mode = "doctor_admin" if decision.is_admin else "patient"
+    trace.medical_ai(
+        f"conversation_mode={conversation_mode} flow={consultation.flow} reason={consultation.reason}"
+    )
     logger.info(
-        "chat_medical_ai telegram_user_id=%s conversation_mode=%s flow=%s reason=%s",
+        "chat_medical_ai telegram_user_id=%s conversation_mode=%s flow=%s reason=%s routing_fix=%s",
         telegram_id,
         conversation_mode,
         consultation.flow,
         consultation.reason,
+        ROUTING_FIX_VERSION,
     )
 
     history = get_last_messages(conversation_id, limit=HISTORY_LIMIT)
 
     print("=== BEFORE ask_ai() ===")
+    print(f"routing_fix_version={ROUTING_FIX_VERSION}")
     print(f"database={DATABASE_PATH}")
     print(f"conversation_id={conversation_id}")
     print(f"history_count={len(history)}")
-    print(f"history={json.dumps(history, ensure_ascii=False, indent=2)}")
-    print(
-        "patient_profile="
-        f"{json.dumps({k: patient_profile.get(k) for k in PROFILE_FIELDS}, ensure_ascii=False)}"
-    )
     print(f"conversation_mode={conversation_mode}")
 
     answer = ask_ai(
@@ -128,4 +229,5 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     save_message(conversation_id, "assistant", answer)
+    trace.dump()
     await update.message.reply_text(answer)

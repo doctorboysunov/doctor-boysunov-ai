@@ -9,7 +9,7 @@ from telegram.ext import (
     filters,
 )
 
-from app.config import BOT_TOKEN, DATABASE_PATH, OPENAI_MODEL
+from app.config import BOT_TOKEN, DATABASE_PATH, OPENAI_MODEL, DASHBOARD_MORNING_HOUR
 from app.db.connection import get_connection, init_db
 from app.handlers.admin_appointments import (
     admin_appointments,
@@ -48,7 +48,7 @@ from app.logging_setup import LOG_FILE, setup_logging
 from app.services.admin_bootstrap import bootstrap_admin_registry
 from app.services.dashboard_service import send_morning_dashboard_to_admins
 from app.services.follow_up_processor import process_due_follow_ups
-from app.config import DASHBOARD_MORNING_HOUR
+from app.services.routing_trace import ROUTING_FIX_VERSION
 
 
 async def _process_due_follow_ups_job(context) -> None:
@@ -93,6 +93,7 @@ def main():
     logger.info("entrypoint=app.main with SQLite conversation memory")
     git_commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")
     logger.info("git_commit_sha=%s", git_commit)
+    logger.info("routing_fix_version=%s", ROUTING_FIX_VERSION)
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_error_handler(_log_handler_error)
@@ -146,7 +147,7 @@ def main():
 
     print(
         f"ClinicOS AI ishga tushdi... memory=ON commit={git_commit} "
-        f"db={DATABASE_PATH} log={LOG_FILE}"
+        f"routing_fix={ROUTING_FIX_VERSION} db={DATABASE_PATH} log={LOG_FILE}"
     )
     try:
         asyncio.get_event_loop()

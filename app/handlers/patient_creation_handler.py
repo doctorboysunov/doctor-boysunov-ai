@@ -17,20 +17,21 @@ from app.services.patient_intake.service import capture_clinical_form
 
 logger = logging.getLogger("doctor_boysunov.patient_creation_handler")
 
-ADMIN_HINT = (
-    "Bemor qo'shish uchun ism va telefon yuboring.\n"
-    "Masalan: Ali Valiyev 901234567"
+NORMAL_AI_HINT = (
+    "Normal AI assistant mode active.\n"
+    "Savollaringizni yozing: tibbiy maslahat, klinika, navbat, narx, joylashuv."
 )
 
 
 async def execute_patient_creation_from_text(
     update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
     *,
     text: str,
     source: str,
     telegram_id: int,
 ) -> bool:
-    """Create or find a patient from text. Returns True when handled."""
+    """Create or find a patient from explicit name+phone intake."""
     message = update.message
     if message is None:
         return False
@@ -55,9 +56,11 @@ async def execute_patient_creation_from_text(
                     duplicate_prevented=not result.created,
                 )
             )
+            + "\n\n"
+            + NORMAL_AI_HINT
         )
         logger.info(
-            "patient_creation_triggered source=%s patient_id=%s by_admin=%s",
+            "patient_creation_completed source=%s patient_id=%s by_admin=%s",
             source,
             result.patient_id,
             telegram_id,
@@ -77,17 +80,12 @@ async def execute_patient_creation_from_text(
         )
         return True
 
-    await message.reply_text(format_admin_creation_confirmation(result))
+    await message.reply_text(format_admin_creation_confirmation(result) + "\n\n" + NORMAL_AI_HINT)
     logger.info(
-        "patient_creation_triggered source=%s patient_id=%s created=%s by_admin=%s",
+        "patient_creation_completed source=%s patient_id=%s created=%s by_admin=%s",
         source,
         result.patient_id,
         result.created,
         telegram_id,
     )
     return True
-
-
-async def send_admin_idle_hint(update: Update) -> None:
-    if update.message is not None:
-        await update.message.reply_text(ADMIN_HINT)

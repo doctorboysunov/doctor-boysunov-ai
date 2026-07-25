@@ -14,8 +14,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_doctor_admin_mode(user.id):
         await update.message.reply_text(
             "Doctor/Admin mode faol.\n\n"
-            "Bemor qo'shish:\n"
-            "Ali Valiyev 901234567\n\n"
+            "Normal AI assistant: savollaringizni bemalol yozing.\n"
             "Buyruqlar: /dashboard, /today, /myid"
         )
         return
