@@ -1,3 +1,5 @@
+import os
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -26,6 +28,8 @@ def main():
     logger.info("debug_log=%s", LOG_FILE)
     logger.info("existing_messages_in_db=%s", message_count)
     logger.info("entrypoint=app.main with SQLite conversation memory")
+    git_commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")
+    logger.info("git_commit_sha=%s", git_commit)
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -35,7 +39,8 @@ def main():
     )
 
     print(
-        f"ClinicOS AI ishga tushdi... memory=ON db={DATABASE_PATH} log={LOG_FILE}"
+        f"ClinicOS AI ishga tushdi... memory=ON commit={git_commit} "
+        f"db={DATABASE_PATH} log={LOG_FILE}"
     )
     app.run_polling()
 
