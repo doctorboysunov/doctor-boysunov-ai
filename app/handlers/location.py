@@ -4,22 +4,37 @@ from __future__ import annotations
 
 import logging
 import re
+from enum import Enum
 from typing import Any
 
 from telegram import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes
 
 from app.repositories.conversation_repository import save_message
-from app.repositories.patient_profile_repository import update_patient_profile
+from app.repositories.patient_profile_repository import (
+    get_patient_profile,
+    update_patient_profile,
+)
+from app.services.intent_router import is_medical_complaint
 from app.services.location_profile import (
     has_location_stored,
-    is_skip_answer,
     is_location_update_trigger,
+    is_skip_answer,
+)
+from app.services.registration_state import (
+    LOCATION_STATE_KEY,
+    clear_registration_state,
+    get_pending_registration_step,
+    get_registration_state,
+    pause_registration,
+    registration_snapshot,
+    resume_registration,
+    set_registration_step,
+    start_registration,
 )
 
 logger = logging.getLogger("doctor_boysunov.location")
 
-LOCATION_STATE_KEY = "location_registration"
 SHARE_LOCATION_BUTTON = "📍 Lokatsiyani ulashish"
 
 STEP_PROMPTS = {
@@ -42,6 +57,13 @@ COMPLETION_MESSAGE = (
 )
 
 
+class LocationHandleResult(str, Enum):
+    NOT_IN_REGISTRATION = "not_in_registration"
+    HANDLED = "handled"
+    MEDICAL_PAUSE = "medical_pause"
+    COMPLETED = "completed"
+
+
 def build_share_location_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [[KeyboardButton(SHARE_LOCATION_BUTTON, request_location=True)]],
@@ -54,36 +76,12 @@ def _normalize_answer(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip())
 
 
-def _get_location_state(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any] | None:
-    if context is None or context.user_data is None:
-        return None
-    state = context.user_data.get(LOCATION_STATE_KEY)
-    if isinstance(state, dict):
-        return state
-    return None
-
-
-def _set_location_state(context: ContextTypes.DEFAULT_TYPE, state: dict[str, Any]) -> None:
-    context.user_data[LOCATION_STATE_KEY] = state
-
-
-def _clear_location_state(context: ContextTypes.DEFAULT_TYPE) -> None:
-    if context is not None and context.user_data is not None:
-        context.user_data.pop(LOCATION_STATE_KEY, None)
-
-
 def start_location_registration(
     context: ContextTypes.DEFAULT_TYPE,
     *,
     updating: bool = False,
 ) -> str:
-    _set_location_state(
-        context,
-        {
-            "step": "country",
-            "updating": updating,
-        },
-    )
+    start_registration(context, updating=updating)
     return STEP_PROMPTS["country"]
 
 
@@ -107,15 +105,42 @@ async def _complete_registration(
     *,
     user_id: int,
     conversation_id: int,
+    announce: bool = True,
 ) -> None:
-    _clear_location_state(context)
-    await _reply_and_remember(
-        update,
-        conversation_id,
-        COMPLETION_MESSAGE,
-        reply_markup=ReplyKeyboardRemove(),
+    snapshot_before = registration_snapshot(context)
+    clear_registration_state(context)
+    logger.info(
+        "location_registration_completed user_id=%s before=%s after=%s",
+        user_id,
+        snapshot_before,
+        registration_snapshot(context),
     )
-    logger.info("location_registration_completed user_id=%s", user_id)
+    if announce:
+        await _reply_and_remember(
+            update,
+            conversation_id,
+            COMPLETION_MESSAGE,
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+
+async def _maybe_complete_after_required_fields(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    user_id: int,
+    conversation_id: int,
+) -> LocationHandleResult | None:
+    profile = get_patient_profile(user_id)
+    if profile and has_location_stored(profile):
+        await _complete_registration(
+            update,
+            context,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        return LocationHandleResult.COMPLETED
+    return None
 
 
 async def handle_location_registration_text(
@@ -125,37 +150,77 @@ async def handle_location_registration_text(
     user_id: int,
     conversation_id: int,
     patient_profile: dict[str, Any],
-) -> bool:
+) -> LocationHandleResult:
     if context is None or context.user_data is None:
-        return False
+        return LocationHandleResult.NOT_IN_REGISTRATION
 
     user_message = update.message.text or ""
     normalized = _normalize_answer(user_message)
 
     if is_location_update_trigger(normalized):
-        start_location_registration(context, updating=True)
+        start_registration(context, updating=True)
         await _reply_and_remember(
             update,
             conversation_id,
             STEP_PROMPTS["country"],
             reply_markup=ReplyKeyboardRemove(),
         )
-        return True
+        return LocationHandleResult.HANDLED
 
-    state = _get_location_state(context)
-    if state is None:
+    reg_state = get_registration_state(context)
+    step = get_pending_registration_step(context)
+
+    if reg_state is None and step is None:
         if has_location_stored(patient_profile):
-            return False
-        start_location_registration(context)
+            return LocationHandleResult.NOT_IN_REGISTRATION
+        start_registration(context)
         await _reply_and_remember(
             update,
             conversation_id,
             STEP_PROMPTS["country"],
             reply_markup=ReplyKeyboardRemove(),
         )
-        return True
+        return LocationHandleResult.HANDLED
 
-    step = state.get("step")
+    profile_now = get_patient_profile(user_id) or patient_profile
+    if step in ("address", "share_location") and has_location_stored(profile_now):
+        clear_registration_state(context)
+        logger.info(
+            "registration_auto_finished_required_fields_saved user_id=%s step=%s",
+            user_id,
+            step,
+        )
+        return LocationHandleResult.NOT_IN_REGISTRATION
+
+    if reg_state == "paused":
+        if is_medical_complaint(normalized):
+            logger.info(
+                "registration_stays_paused_for_medical user_id=%s step=%s text=%r",
+                user_id,
+                step,
+                normalized[:120],
+            )
+            return LocationHandleResult.MEDICAL_PAUSE
+        resume_registration(context)
+        step = get_pending_registration_step(context)
+        logger.info(
+            "registration_resumed user_id=%s step=%s snapshot=%s",
+            user_id,
+            step,
+            registration_snapshot(context),
+        )
+
+    step = get_pending_registration_step(context)
+    if step and is_medical_complaint(normalized):
+        paused_step = pause_registration(context)
+        logger.info(
+            "registration_paused_for_medical user_id=%s step=%s snapshot=%s text=%r",
+            user_id,
+            paused_step,
+            registration_snapshot(context),
+            normalized[:120],
+        )
+        return LocationHandleResult.MEDICAL_PAUSE
 
     if step == "country":
         if len(normalized) < 2:
@@ -164,12 +229,11 @@ async def handle_location_registration_text(
                 conversation_id,
                 "Iltimos, mamlakat nomini yozing.",
             )
-            return True
+            return LocationHandleResult.HANDLED
         update_patient_profile(user_id, country=normalized)
-        state["step"] = "region"
-        _set_location_state(context, state)
+        set_registration_step(context, "region")
         await _reply_and_remember(update, conversation_id, STEP_PROMPTS["region"])
-        return True
+        return LocationHandleResult.HANDLED
 
     if step == "region":
         if len(normalized) < 2:
@@ -178,12 +242,11 @@ async def handle_location_registration_text(
                 conversation_id,
                 "Iltimos, viloyat yoki region nomini yozing.",
             )
-            return True
+            return LocationHandleResult.HANDLED
         update_patient_profile(user_id, region=normalized, city_region=normalized)
-        state["step"] = "district"
-        _set_location_state(context, state)
+        set_registration_step(context, "district")
         await _reply_and_remember(update, conversation_id, STEP_PROMPTS["district"])
-        return True
+        return LocationHandleResult.HANDLED
 
     if step == "district":
         if len(normalized) < 2:
@@ -192,25 +255,39 @@ async def handle_location_registration_text(
                 conversation_id,
                 "Iltimos, tuman nomini yozing.",
             )
-            return True
+            return LocationHandleResult.HANDLED
         update_patient_profile(user_id, district=normalized)
-        state["step"] = "address"
-        _set_location_state(context, state)
+        completed = await _maybe_complete_after_required_fields(
+            update,
+            context,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        if completed is not None:
+            return completed
+        set_registration_step(context, "address")
         await _reply_and_remember(update, conversation_id, STEP_PROMPTS["address"])
-        return True
+        return LocationHandleResult.HANDLED
 
     if step == "address":
         if not is_skip_answer(normalized):
             update_patient_profile(user_id, address=normalized)
-        state["step"] = "share_location"
-        _set_location_state(context, state)
+        completed = await _maybe_complete_after_required_fields(
+            update,
+            context,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        if completed is not None:
+            return completed
+        set_registration_step(context, "share_location")
         await _reply_and_remember(
             update,
             conversation_id,
             STEP_PROMPTS["share_location"],
             reply_markup=build_share_location_keyboard(),
         )
-        return True
+        return LocationHandleResult.HANDLED
 
     if step == "share_location":
         if is_skip_answer(normalized):
@@ -220,17 +297,17 @@ async def handle_location_registration_text(
                 user_id=user_id,
                 conversation_id=conversation_id,
             )
-            return True
+            return LocationHandleResult.COMPLETED
         await _reply_and_remember(
             update,
             conversation_id,
             "Iltimos, \"Lokatsiyani ulashish\" tugmasini bosing yoki \"Skip\" deb yozing.",
             reply_markup=build_share_location_keyboard(),
         )
-        return True
+        return LocationHandleResult.HANDLED
 
-    _clear_location_state(context)
-    return False
+    clear_registration_state(context)
+    return LocationHandleResult.NOT_IN_REGISTRATION
 
 
 async def handle_location_share(
@@ -259,8 +336,8 @@ async def handle_location_share(
         f"[location shared] latitude={location.latitude}, longitude={location.longitude}",
     )
 
-    state = _get_location_state(context)
-    if state is not None and state.get("step") == "share_location":
+    step = get_pending_registration_step(context)
+    if step == "share_location":
         await _complete_registration(
             update,
             context,

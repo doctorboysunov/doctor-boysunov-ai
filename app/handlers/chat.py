@@ -9,7 +9,7 @@ from app.domain.conversation_flow import mark_consultation_flow, resolve_incomin
 from app.domain.patient_profile_fields import PROFILE_FIELDS
 from app.handlers.appointments import handle_appointment_flow
 from app.handlers.common import get_telegram_user_id, register_telegram_user
-from app.handlers.location import handle_location_registration_text
+from app.handlers.location import LocationHandleResult, handle_location_registration_text
 from app.handlers.patient_creation_handler import execute_patient_creation_from_text
 from app.repositories.conversation_repository import (
     get_last_messages,
@@ -125,24 +125,31 @@ async def process_text_message(
 
     if not decision.is_admin:
         trace.consider("handle_location_registration_text (patient only)")
-        location_handled = await handle_location_registration_text(
+        location_result = await handle_location_registration_text(
             update,
             context,
             user_id=user_id,
             conversation_id=conversation_id,
             patient_profile=patient_profile,
         )
+        location_handled = location_result in (
+            LocationHandleResult.HANDLED,
+            LocationHandleResult.COMPLETED,
+        )
+        medical_pause = location_result == LocationHandleResult.MEDICAL_PAUSE
         trace.check(
             location="chat.py",
-            condition="not is_admin AND handle_location_registration_text returned True",
-            result=location_handled,
-            detail="patient location onboarding",
+            condition="location registration result",
+            result=location_result.value,
+            detail=f"handled={location_handled} medical_pause={medical_pause}",
         )
         if location_handled:
             trace.select("location_registration_handler", "patient location step handled message")
             trace.skip_medical_ai("location registration handler returned early")
             trace.dump()
             return
+        if medical_pause:
+            trace.select("registration_paused_for_medical", "routing to Medical AI during registration")
 
         appt_handled = await handle_appointment_flow(
             update,
@@ -162,6 +169,7 @@ async def process_text_message(
             trace.dump()
             return
 
+        patient_profile = get_or_create_patient_profile(user_id)
         has_location = has_location_stored(patient_profile)
         trace.check(
             location="chat.py",
@@ -169,7 +177,7 @@ async def process_text_message(
             result=has_location,
             detail="patient must share location before AI",
         )
-        if not has_location:
+        if not has_location and not medical_pause:
             trace.select("location_gate", "patient has no location — silent return")
             trace.skip_medical_ai("patient location not stored yet")
             trace.dump()

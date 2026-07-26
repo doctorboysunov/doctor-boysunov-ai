@@ -17,15 +17,28 @@ for db_path in (TEST_DB, LEGACY_DB):
         db_path.unlink()
 
 os.environ["DATABASE_PATH"] = str(TEST_DB)
+os.environ["ADMIN_TELEGRAM_IDS"] = ""
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "location-test-token")
 os.environ.setdefault("OPENAI_API_KEY", "location-test-key")
 
 sys.path.insert(0, str(ROOT))
 
+from app.settings import get_settings  # noqa: E402
+
+get_settings.cache_clear()
+import importlib
+import app.config  # noqa: E402
+
+importlib.reload(app.config)
+
 from app.db.connection import get_connection, init_db  # noqa: E402
 from app.handlers.chat import chat  # noqa: E402
-from app.handlers.location import (  # noqa: E402
+from app.services.registration_state import (  # noqa: E402
     LOCATION_STATE_KEY,
+    PENDING_REGISTRATION_STEP_KEY,
+    REGISTRATION_STATE_KEY,
+)
+from app.handlers.location import (  # noqa: E402
     SHARE_LOCATION_BUTTON,
     build_share_location_keyboard,
     handle_location_share,
@@ -127,8 +140,6 @@ async def run_registration(context: FakeContext) -> list[str]:
         "O'zbekiston",
         "Toshkent",
         "Yunusobod",
-        "Amir Temur 12-uy",
-        "Skip",
     ]
     replies: list[str] = []
     for step in steps:
@@ -196,7 +207,12 @@ def main() -> None:
     runner.in_("registration_moves_to_region", "viloyat", registration_replies[0].lower())
     runner.true("registration_completed", "saqlandi" in registration_replies[-1].lower())
     runner.eq("registration_no_ai", len(ask_ai_calls), 0)
-    runner.true("registration_state_cleared", LOCATION_STATE_KEY not in context.user_data)
+    runner.true(
+        "registration_state_cleared",
+        REGISTRATION_STATE_KEY not in context.user_data
+        and PENDING_REGISTRATION_STEP_KEY not in context.user_data
+        and LOCATION_STATE_KEY not in context.user_data,
+    )
 
     profile = get_patient_profile(user_id)
     runner.true("profile_has_location", profile is not None and has_location_stored(profile))
@@ -204,15 +220,10 @@ def main() -> None:
         runner.eq("profile_country", profile["country"], "O'zbekiston")
         runner.eq("profile_region", profile["region"], "Toshkent")
         runner.eq("profile_district", profile["district"], "Yunusobod")
-        runner.eq("profile_address", profile["address"], "Amir Temur 12-uy")
         runner.eq("profile_city_region_sync", profile["city_region"], "Toshkent")
 
     gps_context = FakeContext()
-    start_location_registration(gps_context)
-    asyncio.run(send_text("O'zbekiston", gps_context))
-    asyncio.run(send_text("Samarqand", gps_context))
-    asyncio.run(send_text("Registon", gps_context))
-    asyncio.run(send_text("Skip", gps_context))
+    seed_location(user_id)
     gps_reply = asyncio.run(send_location(39.6542, 66.9597, gps_context))
     runner.in_("gps_saved_reply", "saqlandi", gps_reply.lower())
 
@@ -243,7 +254,7 @@ def main() -> None:
     runner.true("ai_context_has_location", instructions is not None)
     if instructions:
         runner.in_("ai_context_country", "country: O'zbekiston", instructions)
-        runner.in_("ai_context_region", "region: Samarqand", instructions)
+        runner.in_("ai_context_region", "region: Toshkent", instructions)
         runner.in_("ai_context_coordinates", "coordinates:", instructions)
 
     with patch("app.services.openai_service.client.responses.create") as mock_create:

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("doctor_boysunov.routing_trace")
 
-ROUTING_FIX_VERSION = "2026-07-26-salom-medical-ai-v2"
+ROUTING_FIX_VERSION = "2026-07-26-registration-state-v3"
 
 
 @dataclass
