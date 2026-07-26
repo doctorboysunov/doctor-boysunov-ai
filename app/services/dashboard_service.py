@@ -18,11 +18,17 @@ from app.repositories.communication_repository import (
     list_patients_without_reply,
 )
 from app.repositories.dashboard_repository import save_dashboard_snapshot
+from app.repositories.care_manager_repository import (
+    list_care_manager_records_for_patient,
+    list_patients_by_latest_outcome,
+    list_patients_no_response,
+)
 from app.repositories.follow_up_repository import (
     list_due_follow_ups,
     list_follow_ups_by_sequences,
     list_follow_ups_due_on,
     list_follow_ups_in_range,
+    list_upcoming_follow_ups,
 )
 from app.repositories.patient_intake_repository import get_patient_card, list_new_patients_since
 from app.repositories.patient_profile_repository import get_patient_profile
@@ -34,9 +40,9 @@ logger = logging.getLogger("doctor_boysunov.dashboard")
 FOLLOW_UP_BUCKETS: dict[str, tuple[int, ...]] = {
     "10_day": (1,),
     "20_day": (2,),
-    "1_month": (4,),
-    "3_month_examination": (5,),
-    "6_month_preventive": (6,),
+    "30_day": (3,),
+    "3_month_examination": (4,),
+    "6_month_preventive": (5,),
 }
 
 
@@ -139,6 +145,15 @@ def _build_ai_recommendations(dashboard: dict[str, Any]) -> list[str]:
         recommendations.append(
             f"{stats['high_priority_patients']} ta yuqori ustuvor bemor — bugun ustuvor ishlang."
         )
+    care = dashboard.get("care_manager") or {}
+    if care.get("patients_worsening"):
+        recommendations.append(
+            f"{len(care['patients_worsening'])} ta bemor holati yomonlashgan — tezda ko'ring."
+        )
+    if care.get("patients_not_responding"):
+        recommendations.append(
+            f"{len(care['patients_not_responding'])} ta bemor javob bermagan (No Response)."
+        )
     if stats["new_patients_today"]:
         recommendations.append(
             f"{stats['new_patients_today']} ta yangi bemor qo'shildi — qabul kartasini tekshiring."
@@ -182,12 +197,60 @@ def build_doctor_dashboard(*, period: str = "today", anchor_date: str | None = N
     non_responder_ids = list_patients_without_reply(since_iso=since_iso)
     non_responders = [_patient_summary(patient_id=pid) for pid in non_responder_ids]
 
+    improving = [
+        _patient_summary(
+            patient_id=int(item["patient_id"]),
+            extra={
+                "outcome": "good",
+                "follow_up_id": item.get("follow_up_id"),
+                "reply": item.get("patient_reply_text"),
+            },
+        )
+        for item in list_patients_by_latest_outcome("good")
+    ]
+    unchanged = [
+        _patient_summary(
+            patient_id=int(item["patient_id"]),
+            extra={
+                "outcome": "no_change",
+                "follow_up_id": item.get("follow_up_id"),
+                "reply": item.get("patient_reply_text"),
+            },
+        )
+        for item in list_patients_by_latest_outcome("no_change")
+    ]
+    worsening = [
+        _patient_summary(
+            patient_id=int(item["patient_id"]),
+            extra={
+                "outcome": "worse",
+                "follow_up_id": item.get("follow_up_id"),
+                "high_priority": bool(item.get("high_priority")),
+                "reply": item.get("patient_reply_text"),
+            },
+        )
+        for item in list_patients_by_latest_outcome("worse")
+    ]
+    not_responding = [
+        _patient_summary(
+            patient_id=int(item["patient_id"]),
+            extra={
+                "outcome": "no_response",
+                "follow_up_id": item.get("follow_up_id"),
+                "retry_count": item.get("retry_count"),
+            },
+        )
+        for item in list_patients_no_response()
+    ]
+
+    upcoming_follow_ups = _enrich_follow_ups(list_upcoming_follow_ups(from_date=as_of))
+
     missed = _enrich_appointments(list_missed_appointments(before_date=as_of))
     upcoming = _enrich_appointments(list_upcoming_appointments(from_date=as_of))
 
     failed_deliveries = list_failed_deliveries_since(since_iso)
     high_priority_ids: set[int] = set()
-    for group in (follow_ups_due, missed, non_responders):
+    for group in (follow_ups_due, missed, non_responders, worsening, not_responding):
         for item in group:
             high_priority_ids.add(int(item["patient_id"]))
     for delivery in failed_deliveries:
@@ -221,9 +284,16 @@ def build_doctor_dashboard(*, period: str = "today", anchor_date: str | None = N
         "follow_ups_today": follow_ups_today,
         "follow_ups_due": follow_ups_due,
         "follow_up_buckets": follow_up_buckets,
+        "care_manager": {
+            "patients_improving": improving,
+            "patients_unchanged": unchanged,
+            "patients_worsening": worsening,
+            "patients_not_responding": not_responding,
+        },
         "high_priority_patients": high_priority,
         "non_responders": non_responders,
         "new_patients_today": new_patients,
+        "upcoming_follow_ups": upcoming_follow_ups,
         "upcoming_appointments": upcoming[:20],
         "missed_appointments": missed,
         "period_appointments": period_appointments,

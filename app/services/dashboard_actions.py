@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.repositories.appointment_repository import create_appointment
 from app.repositories.follow_up_repository import mark_follow_up_completed, reschedule_follow_up
-from app.repositories.patient_intake_repository import get_patient_card
+from app.services.emr_service import build_patient_emr
 from app.services.communication import send_patient_message
 
 QUICK_ACTIONS = (
@@ -18,9 +18,10 @@ QUICK_ACTIONS = (
 
 
 async def action_open_patient_card(patient_id: int) -> dict:
-    card = get_patient_card(patient_id)
-    if card is None:
-        raise ValueError(f"Patient not found: {patient_id}")
+    try:
+        card = build_patient_emr(patient_id)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
     card["actions"] = list(QUICK_ACTIONS)
     return card
 

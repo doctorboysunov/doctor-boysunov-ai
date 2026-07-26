@@ -31,10 +31,13 @@ reload(app_settings)
 reload(app_config)
 
 from app.db.connection import get_connection, init_db  # noqa: E402
+from app.domain.admin_conversation_state import cancel_patient_registration, enter_patient_registration_mode, get_admin_state  # noqa: E402
 from app.domain.conversation_flow import resolve_incoming_message_flow  # noqa: E402
 from app.domain.conversation_mode import resolve_conversation_mode  # noqa: E402
 from app.handlers.admin_conversation import handle_admin_chat_text  # noqa: E402
 from app.handlers.chat import chat  # noqa: E402
+from app.repositories.emr_repository import get_emr_visit, list_emr_visits_for_patient  # noqa: E402
+from app.services.doctor_visit_parser import parse_doctor_visit_note  # noqa: E402
 from app.services.patient_intake.extraction import extract_patient_from_text  # noqa: E402
 from app.handlers.patient_intake import handle_patient_contact  # noqa: E402
 from app.repositories.conversation_repository import upsert_user  # noqa: E402
@@ -98,7 +101,8 @@ class FakeUpdate:
 
 
 class FakeContext:
-    user_data: dict = {}
+    def __init__(self) -> None:
+        self.user_data: dict = {}
 
 
 def main() -> None:
@@ -131,7 +135,7 @@ def main() -> None:
             treatment_id=1,
             treatment_started=True,
             medical_record_id=1,
-            follow_up_count=7,
+            follow_up_count=6,
             follow_up_dates=("2026-01-11",),
             duplicate_prevented=False,
         )
@@ -140,8 +144,10 @@ def main() -> None:
     runner.check("confirmation_has_id", "Patient ID" in sample, sample)
 
     async def admin_create() -> str:
+        context = FakeContext()
+        enter_patient_registration_mode(context, admin_telegram_id=888001)
         update = FakeUpdate(FakeUser(888001), FakeMessage(text="Ali Valiyev 901234567"))
-        await handle_admin_chat_text(update, FakeContext())
+        await handle_admin_chat_text(update, context)
         return update.message.reply_text.await_args.args[0]
 
     admin_reply = asyncio.run(admin_create())
@@ -150,6 +156,7 @@ def main() -> None:
 
     patient = find_patient_by_phone("901234567")
     runner.true = lambda name, value: runner.check(name, bool(value), repr(value))
+    runner.false = lambda name, value: runner.check(name, not value, repr(value))
     runner.true("patient_in_db", patient is not None)
     if patient:
         runner.eq("created_patient_name", patient.get("full_name"), "Ali Valiyev")
@@ -162,21 +169,22 @@ def main() -> None:
         )
 
     async def admin_duplicate() -> str:
+        context = FakeContext()
+        enter_patient_registration_mode(context, admin_telegram_id=888001)
         update = FakeUpdate(FakeUser(888001), FakeMessage(text="Ali Valiyev 901234567"))
-        await handle_admin_chat_text(update, FakeContext())
+        await handle_admin_chat_text(update, context)
         return update.message.reply_text.await_args.args[0]
 
     dup_reply = asyncio.run(admin_duplicate())
     runner.check("duplicate_short", "already exists" in dup_reply.lower(), dup_reply)
 
     ask_ai_patient = MagicMock(return_value="Shikoyatingiz nima?")
-    with patch("app.handlers.chat.ask_ai", ask_ai_patient):
-        with patch("app.handlers.chat.has_location_stored", return_value=True):
-            with patch("app.handlers.chat.handle_appointment_flow", AsyncMock(return_value=False)):
-                with patch(
-                    "app.handlers.chat.handle_location_registration_text",
-                    AsyncMock(return_value=False),
-                ):
+    with patch("app.services.message_router.ask_ai", ask_ai_patient):
+        with patch("app.services.message_router.handle_appointment_flow", AsyncMock(return_value=False)):
+            with patch(
+                "app.services.message_router.handle_location_registration_text",
+                AsyncMock(return_value=False),
+            ):
                     async def patient_name_phone_no_create() -> None:
                         update = FakeUpdate(
                             FakeUser(777001),
@@ -189,13 +197,12 @@ def main() -> None:
     runner.check("patient_no_intake_capture", find_patient_by_phone("909876543") is None, "")
 
     ask_ai_mock = MagicMock(return_value="Shikoyatingiz nima?")
-    with patch("app.handlers.chat.ask_ai", ask_ai_mock):
-        with patch("app.handlers.chat.has_location_stored", return_value=True):
-            with patch("app.handlers.chat.handle_appointment_flow", AsyncMock(return_value=False)):
-                with patch(
-                    "app.handlers.chat.handle_location_registration_text",
-                    AsyncMock(return_value=False),
-                ):
+    with patch("app.services.message_router.ask_ai", ask_ai_mock):
+        with patch("app.services.message_router.handle_appointment_flow", AsyncMock(return_value=False)):
+            with patch(
+                "app.services.message_router.handle_location_registration_text",
+                AsyncMock(return_value=False),
+            ):
                     async def patient_chat() -> None:
                         update = FakeUpdate(
                             FakeUser(777002),
@@ -217,41 +224,97 @@ def main() -> None:
         runner.eq("plus998_phone", extracted_plus998.phone_number, "+998701041101")
 
     admin_flow = resolve_incoming_message_flow(888001, plus998)
-    runner.eq("admin_plus998_flow", admin_flow.flow, "patient_creation")
-    runner.eq("admin_plus998_reason", admin_flow.reason, "priority_1_admin_name_phone_or_clinical_form")
-    runner.true("admin_plus998_triggers_creation", admin_flow.patient_creation_triggered)
+    runner.eq("admin_plus998_flow", admin_flow.flow, "patient_consultation")
+    runner.eq("admin_plus998_module", admin_flow.module, "general_chat")
+    runner.false("admin_plus998_no_creation_trigger", admin_flow.patient_creation_triggered)
+
+    with patch(
+        "app.domain.conversation_flow.registration_mode_active",
+        return_value=True,
+    ):
+        admin_reg_flow = resolve_incoming_message_flow(888001, plus998)
+    runner.eq("admin_reg_plus998_flow", admin_reg_flow.flow, "patient_creation")
+    runner.true("admin_reg_plus998_triggers_creation", admin_reg_flow.patient_creation_triggered)
 
     admin_idle_flow = resolve_incoming_message_flow(888001, "Salom")
-    runner.eq("admin_idle_flow", admin_idle_flow.flow, "admin_idle")
-    runner.eq("admin_idle_reason", admin_idle_flow.reason, "priority_2_admin_mode_skip_registration")
+    runner.eq("admin_idle_flow", admin_idle_flow.flow, "patient_consultation")
+    runner.eq("admin_idle_module", admin_idle_flow.module, "general_chat")
+
+    doctor_visit_flow = resolve_incoming_message_flow(
+        888001,
+        "Shikoyat: bosh og'riq",
+        admin_active_patient_id=42,
+    )
+    runner.eq("doctor_visit_flow", doctor_visit_flow.flow, "doctor_visit")
+    runner.eq(
+        "doctor_visit_reason",
+        doctor_visit_flow.reason,
+        "existing_patient:admin_labeled_emr_documentation",
+    )
+
+    parsed_complaint = parse_doctor_visit_note("Boshim og'riyapti")
+    runner.eq("parser_complaint", parsed_complaint.main_complaint, "Boshim og'riyapti")
+    parsed_duration = parse_doctor_visit_note("10 kun")
+    runner.check("parser_duration", parsed_duration.treatment_plan is not None, repr(parsed_duration))
+
+    ask_ai_transition = MagicMock(return_value="Shikoyatingizni batafsil yozing.")
+    with patch("app.services.message_router.ask_ai", ask_ai_transition):
+        with patch("app.services.message_router.register_telegram_user", return_value=888001):
+            with patch("app.services.message_router.get_or_create_active_conversation", return_value=99):
+                with patch("app.services.message_router.get_last_messages", return_value=[]):
+                    with patch("app.services.message_router.get_or_create_patient_profile", return_value={}):
+                        with patch("app.services.message_router.save_message"):
+                            async def admin_state_transition() -> tuple[str, str]:
+                                context = FakeContext()
+                                enter_patient_registration_mode(context, admin_telegram_id=888001)
+                                create_update = FakeUpdate(FakeUser(888001), FakeMessage(text="Ali Valiyev +998701041101"))
+                                await chat(create_update, context)
+                                state_after_create = get_admin_state(context, admin_telegram_id=888001)
+                                if state_after_create is None:
+                                    return "missing-state", ""
+
+                                complaint_update = FakeUpdate(FakeUser(888001), FakeMessage(text="Boshim og'riyapti"))
+                                await chat(complaint_update, context)
+                                complaint_reply = complaint_update.message.reply_text.await_args.args[0]
+                                return state_after_create.mode, complaint_reply
+
+                            mode_after_create, complaint_reply = asyncio.run(admin_state_transition())
+
+    runner.eq("state_after_create", mode_after_create, "normal_ai")
+    runner.true("complaint_uses_ai", ask_ai_transition.called)
+    runner.check("complaint_not_creation_hint", "Bemor qo'shish uchun" not in complaint_reply, complaint_reply)
 
     patient_flow = resolve_incoming_message_flow(777001, plus998)
-    runner.eq("patient_name_phone_flow", patient_flow.flow, "patient_registration")
-    runner.false = lambda name, value: runner.check(name, not value, repr(value))
+    runner.eq("patient_name_phone_flow", patient_flow.flow, "patient_consultation")
+    runner.eq("patient_name_phone_module", patient_flow.module, "general_chat")
     runner.false("patient_no_creation_trigger", patient_flow.patient_creation_triggered)
 
     with patch(
-        "app.handlers.chat.execute_patient_creation_from_text",
+        "app.services.message_router.execute_patient_creation_from_text",
         AsyncMock(return_value=True),
     ) as patient_create:
-        with patch("app.handlers.chat.handle_location_registration_text", AsyncMock(return_value=False)):
+        with patch("app.services.message_router.handle_location_registration_text", AsyncMock(return_value=False)):
             async def admin_chat_route() -> None:
+                context = FakeContext()
+                enter_patient_registration_mode(context, admin_telegram_id=888001)
                 update = FakeUpdate(FakeUser(888001), FakeMessage(text=plus998))
-                await chat(update, FakeContext())
+                await chat(update, context)
 
             asyncio.run(admin_chat_route())
     runner.true("admin_chat_patient_creation", patient_create.await_count == 1)
     _, kwargs = patient_create.await_args
     runner.eq("admin_chat_text", kwargs.get("text"), plus998)
 
-    with patch("app.handlers.chat.execute_patient_creation_from_text", AsyncMock(return_value=True)):
-        with patch("app.handlers.chat.send_admin_idle_hint", AsyncMock()) as idle_hint:
+    with patch("app.services.message_router.execute_patient_creation_from_text", AsyncMock(return_value=True)):
+        with patch("app.services.message_router.ask_ai", MagicMock(return_value="Salom")) as admin_ai:
             async def admin_no_registration() -> None:
+                context = FakeContext()
+                cancel_patient_registration(context, admin_telegram_id=888001)
                 update = FakeUpdate(FakeUser(888001), FakeMessage(text="Salom"))
-                await chat(update, FakeContext())
+                await chat(update, context)
 
             asyncio.run(admin_no_registration())
-    runner.true("admin_never_registration", idle_hint.await_count == 1)
+    runner.true("admin_salom_uses_general_chat", admin_ai.called)
 
     async def patient_contact_blocked() -> str:
         update = FakeUpdate(FakeUser(777003), FakeMessage(contact=FakeContact()))
@@ -266,7 +329,7 @@ def main() -> None:
         text="Mode Test 901222333",
         telegram_id=None,
     )
-    runner.true("follow_ups_scheduled", follow_ups is not None and follow_ups.follow_up_count == 7)
+    runner.true("follow_ups_scheduled", follow_ups is not None and follow_ups.follow_up_count == 6)
 
     print()
     print("=" * 72)

@@ -69,11 +69,13 @@ class DashboardResponse(BaseModel):
     non_responders: list[dict[str, Any]]
     new_patients_today: list[dict[str, Any]]
     upcoming_appointments: list[dict[str, Any]]
+    upcoming_follow_ups: list[dict[str, Any]]
     missed_appointments: list[dict[str, Any]]
     statistics: dict[str, int]
     ai_recommendations: list[str]
     filters: list[str]
     layout: dict[str, Any]
+    care_manager: dict[str, Any] | None = None
 
 
 @app.on_event("startup")

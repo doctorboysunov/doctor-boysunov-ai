@@ -81,6 +81,11 @@ class FakeUpdate:
     message = FakeMessage("")
 
 
+class FakeContext:
+    def __init__(self) -> None:
+        self.user_data: dict = {}
+
+
 def fake_unsafe_create(**kwargs):
     class FakeResponse:
         output_text = (
@@ -104,11 +109,13 @@ def fake_safe_create(**kwargs):
 async def run_chat(text: str) -> str:
     update = FakeUpdate()
     update.message = FakeMessage(text)
+    context = FakeContext()
     with patch(
         "app.services.openai_service.client.responses.create",
         side_effect=fake_unsafe_create,
     ):
-        await chat(update, None)
+        with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+            await chat(update, context)
     return update.message.reply_text.await_args.args[0]
 
 

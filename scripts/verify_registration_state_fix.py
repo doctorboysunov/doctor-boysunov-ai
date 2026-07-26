@@ -123,7 +123,7 @@ async def main() -> None:
     with patch("app.handlers.chat.ask_ai", ask_ai):
         unstuck_reply = await send(stuck_user, "Boshim og'riyapti", stuck_context)
 
-    print("\n=== AFTER (auto-finished + Medical AI) ===")
+    print("\n=== AFTER (auto-finished + Consultation Engine) ===")
     after_stuck = {
         "patient_profiles": profile_row(stuck_user_id),
         "context": registration_snapshot(stuck_context),
@@ -131,7 +131,7 @@ async def main() -> None:
     }
     print(json.dumps(after_stuck, ensure_ascii=False, indent=2))
     assert after_stuck["context"]["registration_state"] is None
-    assert ask_ai.called
+    assert "konsultatsiya" in unstuck_reply.lower() or "?" in unstuck_reply
 
     fresh_user = FakeUser(880002, "fresh_patient", "Fresh Patient")
     fresh_user_id = upsert_user(
@@ -181,6 +181,7 @@ async def main() -> None:
     print(json.dumps({"context": paused, "medical_reply": medical_reply}, ensure_ascii=False, indent=2))
     assert paused["registration_state"] == "paused"
     assert paused["pending_registration_step"] == "district"
+    assert "konsultatsiya" in medical_reply.lower() or "?" in medical_reply
 
     print("\n=== RUN: resume registration after medical pause ===")
     with patch("app.handlers.chat.ask_ai", ask_ai):

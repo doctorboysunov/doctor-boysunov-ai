@@ -14,6 +14,7 @@ _APPOINTMENT_COLUMNS = (
     "id",
     "patient_id",
     "doctor_name",
+    "clinic_location_id",
     "appointment_date",
     "appointment_time",
     "complaint",
@@ -30,6 +31,7 @@ _APPOINTMENT_SELECT = """
         a.id,
         a.patient_id,
         a.doctor_name,
+        a.clinic_location_id,
         a.appointment_date,
         a.appointment_time,
         a.complaint,
@@ -54,9 +56,13 @@ def _utc_now() -> str:
 
 
 def _row_to_appointment(row) -> dict[str, Any]:
-    appointment = {column: row[column] for column in _APPOINTMENT_COLUMNS}
+    appointment = {column: row[column] for column in _APPOINTMENT_COLUMNS if column in row.keys()}
+    for column in _APPOINTMENT_COLUMNS:
+        appointment.setdefault(column, None)
     appointment["id"] = int(appointment["id"])
     appointment["patient_id"] = int(appointment["patient_id"])
+    if appointment.get("clinic_location_id") is not None:
+        appointment["clinic_location_id"] = int(appointment["clinic_location_id"])
     return appointment
 
 
@@ -108,6 +114,7 @@ def create_appointment(
     appointment_time: str,
     complaint: str,
     status: str = DEFAULT_APPOINTMENT_STATUS,
+    clinic_location_id: int | None = None,
 ) -> dict[str, Any]:
     _validate_status(status)
 
@@ -127,6 +134,7 @@ def create_appointment(
             INSERT INTO appointments (
                 patient_id,
                 doctor_name,
+                clinic_location_id,
                 appointment_date,
                 appointment_time,
                 complaint,
@@ -134,11 +142,12 @@ def create_appointment(
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 patient_id,
                 doctor_name.strip(),
+                clinic_location_id,
                 appointment_date.strip(),
                 appointment_time.strip(),
                 complaint.strip(),
@@ -167,6 +176,16 @@ def get_appointment(appointment_id: int) -> dict[str, Any] | None:
 
 def get_patient_appointments(patient_id: int) -> list[dict[str, Any]]:
     return _fetch_appointments("WHERE a.patient_id = ?", (patient_id,))
+
+
+def list_appointments_for_clinic_on_date(
+    clinic_location_id: int,
+    appointment_date: str,
+) -> list[dict[str, Any]]:
+    return _fetch_appointments(
+        "WHERE a.clinic_location_id = ? AND a.appointment_date = ?",
+        (clinic_location_id, appointment_date),
+    )
 
 
 def list_appointments() -> list[dict[str, Any]]:

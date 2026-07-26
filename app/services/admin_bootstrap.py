@@ -46,5 +46,5 @@ def claim_admin_with_pin(telegram_id: int, pin: str) -> tuple[bool, str]:
     return True, (
         f"Administrator faollashtirildi.\n"
         f"Telegram ID: {telegram_id}\n"
-        f"Endi bemor qo'shish uchun: Ali Valiyev 901234567"
+        f"Normal AI assistant faol. Yangi bemor: /add_patient yoki \"Add Patient\" tugmasi."
     )

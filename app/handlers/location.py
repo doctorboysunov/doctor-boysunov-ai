@@ -15,10 +15,10 @@ from app.repositories.patient_profile_repository import (
     get_patient_profile,
     update_patient_profile,
 )
-from app.services.intent_router import is_medical_complaint
 from app.services.location_profile import (
     has_location_stored,
     is_location_update_trigger,
+    is_medical_complaint,
     is_skip_answer,
 )
 from app.services.registration_state import (

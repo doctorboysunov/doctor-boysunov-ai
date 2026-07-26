@@ -8,8 +8,10 @@ from telegram import Bot
 
 from app.repositories.follow_up_repository import list_due_follow_ups, mark_follow_up_notified
 from app.services.communication import send_patient_message
+from app.services.care_manager_service import record_care_manager_send
 from app.services.follow_up_planner import schedule_next_recurring_if_missing
 from app.services.follow_up_scheduler import to_iso_date
+from app.services.appointment_dates import clinic_today_iso
 
 logger = logging.getLogger("doctor_boysunov.follow_up_processor")
 
@@ -34,7 +36,14 @@ async def notify_patient_follow_up(bot: Bot, follow_up: dict) -> bool:
 
     mark_follow_up_notified(follow_up["id"])
 
-    if follow_up["sequence_number"] >= 6:
+    record_care_manager_send(
+        follow_up=follow_up,
+        message_text=follow_up["invitation_text"],
+        event_date=follow_up.get("scheduled_date") or clinic_today_iso(),
+        is_retry=int(follow_up.get("retry_count") or 0) > 0,
+    )
+
+    if follow_up["sequence_number"] >= 5:
         schedule_next_recurring_if_missing(follow_up["treatment_id"])
 
     logger.info(

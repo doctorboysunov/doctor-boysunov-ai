@@ -60,7 +60,7 @@ def schedule_next_recurring_if_missing(treatment_id: int) -> dict | None:
         return None
 
     max_sequence = max(item["sequence_number"] for item in existing)
-    if max_sequence < 6:
+    if max_sequence < 5:
         return None
     if any(item["sequence_number"] == max_sequence + 1 for item in existing):
         return None
@@ -98,3 +98,68 @@ def start_patient_follow_up_schedule(*, patient_id: int, started_at: str) -> dic
     treatment = create_treatment(patient_id=patient_id, started_at=started_at)
     generate_initial_follow_up_schedule(treatment["id"])
     return treatment
+
+
+def ensure_automatic_follow_up_plan(*, patient_id: int, anchor_date: str) -> dict:
+    """Create the full automatic follow-up plan from an anchor date (idempotent if active plan exists)."""
+    from app.repositories.treatment_repository import get_active_treatment
+
+    active = get_active_treatment(patient_id)
+    if active is not None:
+        existing = list_follow_ups_for_treatment(active["id"])
+        pending = [item for item in existing if item["status"] in {"scheduled", "notified"}]
+        if pending:
+            logger.info(
+                "automatic_follow_up_skipped patient_id=%s treatment_id=%s pending=%s",
+                patient_id,
+                active["id"],
+                len(pending),
+            )
+            return active
+
+    return restart_automatic_follow_up_plan(patient_id=patient_id, anchor_date=anchor_date)
+
+
+def restart_automatic_follow_up_plan(*, patient_id: int, anchor_date: str) -> dict:
+    """Stop any pending follow-ups and start a fresh automatic plan from anchor_date."""
+    from app.repositories.treatment_repository import complete_active_treatment
+
+    active = complete_active_treatment(patient_id)
+    if active is not None:
+        from app.repositories.follow_up_repository import cancel_pending_follow_ups_for_treatment
+
+        cancel_pending_follow_ups_for_treatment(int(active["id"]))
+
+    treatment = start_patient_follow_up_schedule(patient_id=patient_id, started_at=anchor_date)
+    logger.info(
+        "automatic_follow_up_plan_created patient_id=%s treatment_id=%s anchor=%s",
+        patient_id,
+        treatment["id"],
+        anchor_date,
+    )
+    return treatment
+
+
+def stop_patient_follow_up_plan(patient_id: int) -> dict[str, int | bool]:
+    """Doctor stops automatic follow-ups for a patient."""
+    from app.repositories.follow_up_repository import cancel_pending_follow_ups_for_patient
+    from app.repositories.treatment_repository import cancel_active_treatment
+
+    cancelled_follow_ups = cancel_pending_follow_ups_for_patient(patient_id)
+    cancelled_treatment = cancel_active_treatment(patient_id)
+    logger.info(
+        "follow_up_plan_stopped patient_id=%s cancelled_follow_ups=%s treatment_cancelled=%s",
+        patient_id,
+        cancelled_follow_ups,
+        cancelled_treatment is not None,
+    )
+    return {
+        "patient_id": patient_id,
+        "cancelled_follow_ups": cancelled_follow_ups,
+        "treatment_stopped": cancelled_treatment is not None,
+    }
+
+
+def on_visit_completed(*, patient_id: int, visit_date: str) -> dict | None:
+    """Visit finished — automatically (re)create the full follow-up plan from visit date."""
+    return restart_automatic_follow_up_plan(patient_id=patient_id, anchor_date=visit_date)

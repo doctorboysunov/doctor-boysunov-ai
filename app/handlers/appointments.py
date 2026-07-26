@@ -14,6 +14,10 @@ from app.repositories.appointment_repository import create_appointment
 from app.repositories.conversation_repository import save_message
 from app.repositories.patient_profile_repository import update_patient_profile
 from app.services.appointment_notifications import notify_admins_new_appointment
+from app.services.clinic_locator_service import (
+    format_clinic_recommendation_message,
+    recommend_clinic_for_patient,
+)
 
 logger = logging.getLogger("doctor_boysunov.appointments")
 
@@ -66,7 +70,7 @@ def _clear_booking_state(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop(BOOKING_STATE_KEY, None)
 
 
-def _start_booking(context: ContextTypes.DEFAULT_TYPE) -> str:
+def _start_booking(context: ContextTypes.DEFAULT_TYPE, *, recommendation: dict | None = None) -> str:
     _set_booking_state(
         context,
         {
@@ -76,15 +80,21 @@ def _start_booking(context: ContextTypes.DEFAULT_TYPE) -> str:
             "appointment_date": None,
             "appointment_time": None,
             "complaint": None,
+            "clinic_location_id": recommendation.get("clinic_location_id") if recommendation else None,
+            "doctor_name": recommendation.get("staff_name") if recommendation else DEFAULT_DOCTOR_NAME,
+            "clinic_name": recommendation.get("clinic_name") if recommendation else None,
         },
     )
     return STEP_PROMPTS["full_name"]
 
 
 def _build_confirmation_summary(booking: dict[str, Any]) -> str:
+    doctor_line = booking.get("doctor_name") or DEFAULT_DOCTOR_NAME
+    clinic_line = booking.get("clinic_name") or "Doctor Boysunov Clinic"
     return (
         "Qabul so'rovingiz:\n\n"
-        f"Shifokor: {DEFAULT_DOCTOR_NAME}\n"
+        f"Klinika: {clinic_line}\n"
+        f"Shifokor: {doctor_line}\n"
         f"Ism: {booking['full_name']}\n"
         f"Telefon: {booking['phone_number']}\n"
         f"Sana: {booking['appointment_date']}\n"
@@ -133,9 +143,14 @@ async def handle_appointment_flow(
     if booking is None:
         if not is_booking_trigger(user_message):
             return False
-        prompt = _start_booking(context)
+        recommendation = recommend_clinic_for_patient(user_id)
+        prompt = _start_booking(context, recommendation=recommendation)
         save_message(conversation_id, "assistant", prompt)
         await update.message.reply_text(prompt)
+        if recommendation is not None:
+            clinic_msg = format_clinic_recommendation_message(recommendation)
+            save_message(conversation_id, "assistant", clinic_msg)
+            await update.message.reply_text(clinic_msg)
         return True
 
     step = booking.get("step")
@@ -213,10 +228,11 @@ async def handle_appointment_flow(
             )
             appointment = create_appointment(
                 patient_id=user_id,
-                doctor_name=DEFAULT_DOCTOR_NAME,
+                doctor_name=booking.get("doctor_name") or DEFAULT_DOCTOR_NAME,
                 appointment_date=booking["appointment_date"],
                 appointment_time=booking["appointment_time"],
                 complaint=booking["complaint"],
+                clinic_location_id=booking.get("clinic_location_id"),
             )
             bot = getattr(context, "bot", None)
             if bot is not None:

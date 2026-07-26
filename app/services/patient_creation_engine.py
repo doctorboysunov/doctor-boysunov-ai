@@ -10,7 +10,8 @@ from app.repositories.medical_history_repository import add_medical_record
 from app.repositories.patient_intake_repository import find_patient_by_phone, search_patients
 from app.repositories.treatment_repository import get_active_treatment
 from app.services.appointment_dates import clinic_today_iso
-from app.services.follow_up_planner import start_patient_follow_up_schedule
+from app.services.emr_service import ensure_initial_visit_on_registration
+from app.services.follow_up_planner import ensure_automatic_follow_up_plan
 from app.services.patient_intake.service import capture_patient
 
 logger = logging.getLogger("doctor_boysunov.patient_creation")
@@ -51,12 +52,19 @@ def _ensure_treatment_and_records(
         notes=f"Telefon: {phone_number}",
         event_date=started_at,
     )
-    treatment = start_patient_follow_up_schedule(
+    treatment = ensure_automatic_follow_up_plan(
         patient_id=patient_id,
-        started_at=started_at,
+        anchor_date=started_at,
     )
     follow_ups = list_follow_ups_for_patient(patient_id)
     dates = tuple(item["scheduled_date"] for item in follow_ups)
+    ensure_initial_visit_on_registration(
+        patient_id=patient_id,
+        full_name=full_name,
+        phone_number=phone_number,
+        visit_date=started_at,
+        follow_up_dates=dates,
+    )
     return int(treatment["id"]), int(record["id"]), len(follow_ups), dates
 
 

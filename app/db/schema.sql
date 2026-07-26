@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS appointments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     patient_id INTEGER NOT NULL REFERENCES users(id),
     doctor_name TEXT NOT NULL,
+    clinic_location_id INTEGER REFERENCES clinic_locations(id),
     appointment_date TEXT NOT NULL,
     appointment_time TEXT NOT NULL,
     complaint TEXT NOT NULL,
@@ -151,11 +152,17 @@ CREATE TABLE IF NOT EXISTS follow_ups (
     ),
     scheduled_date TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'scheduled' CHECK (
-        status IN ('scheduled', 'notified', 'completed', 'cancelled')
+        status IN ('scheduled', 'notified', 'completed', 'cancelled', 'no_response')
     ),
     invitation_text TEXT NOT NULL,
     notified_at TEXT,
     completed_at TEXT,
+    response_outcome TEXT NOT NULL DEFAULT 'pending' CHECK (
+        response_outcome IN ('pending', 'good', 'no_change', 'worse', 'no_response')
+    ),
+    patient_reply_text TEXT,
+    high_priority INTEGER NOT NULL DEFAULT 0,
+    retry_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -227,4 +234,114 @@ CREATE TABLE IF NOT EXISTS admin_telegram_ids (
     telegram_id INTEGER PRIMARY KEY,
     source TEXT NOT NULL DEFAULT 'env',
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS emr_visits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id INTEGER NOT NULL REFERENCES users(id),
+    visit_date TEXT NOT NULL,
+    main_complaint TEXT,
+    examination_findings TEXT,
+    neurological_examination TEXT,
+    preliminary_diagnosis TEXT,
+    final_diagnosis TEXT,
+    icd10_code TEXT,
+    recommended_examinations TEXT,
+    treatment_plan TEXT,
+    procedures_performed TEXT,
+    follow_up_schedule TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_emr_visits_patient_id
+    ON emr_visits(patient_id, visit_date DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_emr_visits_visit_date
+    ON emr_visits(visit_date, id);
+
+CREATE TABLE IF NOT EXISTS consultation_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id INTEGER NOT NULL REFERENCES users(id),
+    visit_id INTEGER NOT NULL REFERENCES emr_visits(id),
+    complaint_category TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK (phase IN ('collecting', 'complete', 'emergency')),
+    asked_question_ids TEXT NOT NULL DEFAULT '[]',
+    answers_json TEXT NOT NULL DEFAULT '{}',
+    current_question_id TEXT,
+    summary_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_consultation_sessions_patient
+    ON consultation_sessions(patient_id, phase, id DESC);
+
+CREATE TABLE IF NOT EXISTS care_manager_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id INTEGER NOT NULL REFERENCES users(id),
+    follow_up_id INTEGER REFERENCES follow_ups(id),
+    sequence_number INTEGER,
+    event_type TEXT NOT NULL CHECK (
+        event_type IN (
+            'check_in_sent',
+            'examination_invite',
+            'preventive_invite',
+            'reply_received',
+            'retry_sent',
+            'no_response_marked',
+            'doctor_notified'
+        )
+    ),
+    outcome TEXT CHECK (
+        outcome IN ('pending', 'good', 'no_change', 'worse', 'no_response')
+    ),
+    message_text TEXT,
+    reply_text TEXT,
+    event_date TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_care_manager_patient_id
+    ON care_manager_records(patient_id, event_date DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_care_manager_follow_up_id
+    ON care_manager_records(follow_up_id, id);
+
+CREATE TABLE IF NOT EXISTS clinic_locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    clinic_name TEXT NOT NULL,
+    staff_name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('doctor', 'student', 'assistant')),
+    specialty TEXT,
+    address TEXT NOT NULL,
+    google_maps_link TEXT,
+    latitude REAL NOT NULL,
+    longitude REAL NOT NULL,
+    working_days TEXT NOT NULL DEFAULT 'mon,tue,wed,thu,fri',
+    working_hours_start TEXT NOT NULL DEFAULT '09:00',
+    working_hours_end TEXT NOT NULL DEFAULT '18:00',
+    phone TEXT,
+    services TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    sort_priority INTEGER NOT NULL DEFAULT 100,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_clinic_locations_active
+    ON clinic_locations(is_active, role, sort_priority);
+
+CREATE INDEX IF NOT EXISTS idx_clinic_locations_specialty
+    ON clinic_locations(specialty, is_active);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    admin_telegram_id INTEGER PRIMARY KEY,
+    mode TEXT NOT NULL DEFAULT 'normal_ai' CHECK (mode IN ('normal_ai', 'doctor_visit', 'patient_registration')),
+    active_patient_id INTEGER REFERENCES users(id),
+    active_patient_name TEXT,
+    visit_id INTEGER REFERENCES emr_visits(id),
+    registration_started_at TEXT,
+    updated_at TEXT NOT NULL
 );

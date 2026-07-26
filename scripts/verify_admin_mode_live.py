@@ -33,6 +33,7 @@ reload(app_settings)
 reload(app_config)
 
 from app.db.connection import init_db  # noqa: E402
+from app.domain.admin_conversation_state import enter_patient_registration_mode  # noqa: E402
 from app.handlers.chat import chat  # noqa: E402
 from app.handlers.start import claim_admin, myid  # noqa: E402
 from app.services.admin_auth import is_admin  # noqa: E402
@@ -79,7 +80,9 @@ class FakeUpdate:
 
 
 class FakeContext:
-    args: list[str] = []
+    def __init__(self) -> None:
+        self.user_data: dict = {}
+        self.args: list[str] = []
 
 
 DOCTOR_ID = 701041101  # example admin telegram id from bug report phone pattern
@@ -97,10 +100,9 @@ async def main_async(runner: TestRunner) -> None:
     runner.check("admin_disabled_without_config", not is_admin(DOCTOR_ID), "")
 
     ask_ai_mock = MagicMock(return_value="Shikoyatingiz nima?")
-    with patch("app.handlers.chat.ask_ai", ask_ai_mock):
-        with patch("app.handlers.chat.has_location_stored", return_value=True):
-            with patch("app.handlers.chat.handle_appointment_flow", AsyncMock(return_value=False)):
-                with patch("app.handlers.chat.handle_location_registration_text", AsyncMock(return_value=False)):
+    with patch("app.services.message_router.ask_ai", ask_ai_mock):
+        with patch("app.services.message_router.handle_appointment_flow", AsyncMock(return_value=False)):
+            with patch("app.services.message_router.handle_location_registration_text", AsyncMock(return_value=False)):
                     await chat(FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101"), FakeContext())
 
     runner.true = lambda name, value: runner.check(name, bool(value), repr(value))
@@ -116,9 +118,26 @@ async def main_async(runner: TestRunner) -> None:
     runner.true("admin_enabled_after_claim", is_admin(DOCTOR_ID))
 
     ask_ai_mock.reset_mock()
-    with patch("app.handlers.chat.ask_ai", ask_ai_mock):
+    with patch("app.services.message_router.ask_ai", ask_ai_mock):
+        with patch("app.services.message_router.register_telegram_user", return_value=DOCTOR_ID):
+            with patch("app.services.message_router.get_or_create_active_conversation", return_value=1):
+                with patch("app.services.message_router.get_last_messages", return_value=[]):
+                    with patch("app.services.message_router.get_or_create_patient_profile", return_value={}):
+                        with patch("app.services.message_router.save_message"):
+                            free_context = FakeContext()
+                            free_update = FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101")
+                            await chat(free_update, free_context)
+                            free_reply = free_update.message.reply_text.await_args.args[0]
+
+    runner.check("admin_free_name_phone_uses_ai", ask_ai_mock.called, "ask_ai was not called")
+    runner.check("admin_free_name_phone_not_created", "Patient created" not in free_reply, free_reply)
+
+    ask_ai_mock.reset_mock()
+    reg_context = FakeContext()
+    enter_patient_registration_mode(reg_context, admin_telegram_id=DOCTOR_ID)
+    with patch("app.services.message_router.ask_ai", ask_ai_mock):
         update = FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101")
-        await chat(update, FakeContext())
+        await chat(update, reg_context)
         reply = update.message.reply_text.await_args.args[0]
 
     runner.check("admin_mode_no_ai", not ask_ai_mock.called, "ask_ai was called")

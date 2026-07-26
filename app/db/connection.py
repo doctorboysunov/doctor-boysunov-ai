@@ -352,6 +352,157 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             """
         )
 
+    if "emr_visits" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE emr_visits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_id INTEGER NOT NULL REFERENCES users(id),
+                visit_date TEXT NOT NULL,
+                main_complaint TEXT,
+                examination_findings TEXT,
+                neurological_examination TEXT,
+                preliminary_diagnosis TEXT,
+                final_diagnosis TEXT,
+                icd10_code TEXT,
+                recommended_examinations TEXT,
+                treatment_plan TEXT,
+                procedures_performed TEXT,
+                follow_up_schedule TEXT,
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_emr_visits_patient_id
+                ON emr_visits(patient_id, visit_date DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_emr_visits_visit_date
+                ON emr_visits(visit_date, id);
+            """
+        )
+
+    if "follow_ups" in tables:
+        follow_up_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(follow_ups)").fetchall()
+        }
+        for column_name, column_type in (
+            ("response_outcome", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("patient_reply_text", "TEXT"),
+            ("high_priority", "INTEGER NOT NULL DEFAULT 0"),
+            ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if column_name not in follow_up_columns:
+                conn.execute(
+                    f"ALTER TABLE follow_ups ADD COLUMN {column_name} {column_type}"
+                )
+
+    if "care_manager_records" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE care_manager_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_id INTEGER NOT NULL REFERENCES users(id),
+                follow_up_id INTEGER REFERENCES follow_ups(id),
+                sequence_number INTEGER,
+                event_type TEXT NOT NULL,
+                outcome TEXT,
+                message_text TEXT,
+                reply_text TEXT,
+                event_date TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_care_manager_patient_id
+                ON care_manager_records(patient_id, event_date DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_care_manager_follow_up_id
+                ON care_manager_records(follow_up_id, id);
+            """
+        )
+
+    if "clinic_locations" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE clinic_locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                clinic_name TEXT NOT NULL,
+                staff_name TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('doctor', 'student', 'assistant')),
+                specialty TEXT,
+                address TEXT NOT NULL,
+                google_maps_link TEXT,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                working_days TEXT NOT NULL DEFAULT 'mon,tue,wed,thu,fri',
+                working_hours_start TEXT NOT NULL DEFAULT '09:00',
+                working_hours_end TEXT NOT NULL DEFAULT '18:00',
+                phone TEXT,
+                services TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                sort_priority INTEGER NOT NULL DEFAULT 100,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_clinic_locations_active
+                ON clinic_locations(is_active, role, sort_priority);
+            """
+        )
+
+    if "appointments" in tables:
+        appointment_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(appointments)").fetchall()
+        }
+        if "clinic_location_id" not in appointment_columns:
+            conn.execute(
+                "ALTER TABLE appointments ADD COLUMN clinic_location_id INTEGER REFERENCES clinic_locations(id)"
+            )
+
+    if "admin_sessions" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE admin_sessions (
+                admin_telegram_id INTEGER PRIMARY KEY,
+                mode TEXT NOT NULL DEFAULT 'normal_ai' CHECK (mode IN ('normal_ai', 'doctor_visit', 'patient_registration')),
+                active_patient_id INTEGER REFERENCES users(id),
+                active_patient_name TEXT,
+                visit_id INTEGER REFERENCES emr_visits(id),
+                registration_started_at TEXT,
+                updated_at TEXT NOT NULL
+            );
+            """
+        )
+    else:
+        admin_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(admin_sessions)").fetchall()
+        }
+        if "registration_started_at" not in admin_columns:
+            conn.execute("ALTER TABLE admin_sessions ADD COLUMN registration_started_at TEXT")
+
+    if "consultation_sessions" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE consultation_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_id INTEGER NOT NULL REFERENCES users(id),
+                visit_id INTEGER NOT NULL REFERENCES emr_visits(id),
+                complaint_category TEXT NOT NULL,
+                phase TEXT NOT NULL CHECK (phase IN ('collecting', 'complete', 'emergency')),
+                asked_question_ids TEXT NOT NULL DEFAULT '[]',
+                answers_json TEXT NOT NULL DEFAULT '{}',
+                current_question_id TEXT,
+                summary_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_consultation_sessions_patient
+                ON consultation_sessions(patient_id, phase, id DESC);
+            """
+        )
+
 
 def init_db() -> None:
     schema = _SCHEMA_PATH.read_text(encoding="utf-8")

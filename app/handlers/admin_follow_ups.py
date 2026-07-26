@@ -11,7 +11,10 @@ from telegram.ext import ContextTypes
 from app.repositories.follow_up_repository import list_due_follow_ups, list_follow_ups_for_patient
 from app.services.admin_auth import is_admin
 from app.services.appointment_dates import clinic_today_iso
-from app.services.follow_up_planner import start_patient_follow_up_schedule
+from app.services.follow_up_planner import (
+    start_patient_follow_up_schedule,
+    stop_patient_follow_up_plan,
+)
 from app.services.follow_up_processor import process_due_follow_ups
 from app.services.follow_up_scheduler import to_iso_date
 
@@ -102,3 +105,20 @@ async def admin_run_followups(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     sent = await process_due_follow_ups(context.bot)
     await update.message.reply_text(f"Yuborilgan nazorat xabarlari: {sent}")
+
+
+async def admin_stop_followups(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _deny_unless_admin(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Foydalanish: /stop_followups <patient_id>")
+        return
+
+    patient_id = int(context.args[0])
+    result = stop_patient_follow_up_plan(patient_id)
+    await update.message.reply_text(
+        "Avtomatik nazorat to'xtatildi.\n\n"
+        f"Bemor ID: {patient_id}\n"
+        f"Bekor qilingan nazoratlar: {result['cancelled_follow_ups']}\n"
+        f"Davolanish to'xtatildi: {'ha' if result['treatment_stopped'] else 'yo\'q'}"
+    )

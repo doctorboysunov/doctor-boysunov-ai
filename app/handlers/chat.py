@@ -20,6 +20,10 @@ from app.repositories.patient_profile_repository import (
     get_or_create_patient_profile,
     update_patient_profile,
 )
+from app.services.consultation_engine import (
+    process_consultation_turn,
+    should_use_consultation_engine,
+)
 from app.services.location_profile import has_location_stored
 from app.services.openai_service import ask_ai
 from app.services.profile_extraction import extract_profile_updates
@@ -222,6 +226,26 @@ async def process_text_message(
     )
 
     history = get_last_messages(conversation_id, limit=HISTORY_LIMIT)
+
+    user_data = context.user_data if context is not None else None
+    use_consultation = (
+        not decision.is_admin
+        and should_use_consultation_engine(user_id, user_message, user_data)
+    )
+    if use_consultation:
+        trace.select(
+            "Professional Consultation Engine",
+            f"conversation_mode={conversation_mode} structured medical intake",
+        )
+        result = process_consultation_turn(
+            user_id,
+            user_message,
+            user_data=user_data,
+        )
+        save_message(conversation_id, "assistant", result.reply)
+        trace.dump()
+        await update.message.reply_text(result.reply)
+        return
 
     print("=== BEFORE ask_ai() ===")
     print(f"routing_fix_version={ROUTING_FIX_VERSION}")

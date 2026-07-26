@@ -36,24 +36,21 @@ def apply_offset(base: date, offset: ScheduleOffset) -> date:
 
 
 def build_initial_follow_up_dates(treatment_start: date) -> list[tuple[int, date, str]]:
-    """Return (sequence_number, scheduled_date, kind) for steps 1-6."""
+    """Return (sequence_number, scheduled_date, kind) for steps 1-5 from anchor date."""
     results: list[tuple[int, date, str]] = []
-    anchor = treatment_start
 
     for index, step in enumerate(INITIAL_FOLLOW_UP_SCHEDULE, start=1):
-        if index == 1:
-            scheduled = apply_offset(anchor, step)
-        else:
-            scheduled = apply_offset(results[-1][1], step)
+        scheduled = apply_offset(treatment_start, step)
         results.append((index, scheduled, step.kind))
 
     return results
 
 
-def build_recurring_follow_up_date(previous_scheduled: date) -> tuple[int, date, str]:
-    scheduled = apply_offset(previous_scheduled, RECURRING_FOLLOW_UP_OFFSET)
-    return scheduled
+def build_recurring_follow_up_date(previous_scheduled: date) -> date:
+    return apply_offset(previous_scheduled, RECURRING_FOLLOW_UP_OFFSET)
 
 
 def next_recurring_sequence(existing_max_sequence: int) -> int:
-    return max(existing_max_sequence + 1, 7)
+    from app.domain.follow_up_schedule import RECURRING_START_SEQUENCE
+
+    return max(existing_max_sequence + 1, RECURRING_START_SEQUENCE)

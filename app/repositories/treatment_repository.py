@@ -96,3 +96,40 @@ def list_treatments_for_patient(patient_id: int) -> list[dict[str, Any]]:
             (patient_id,),
         ).fetchall()
     return [_row_to_treatment(row) for row in rows]
+
+
+def update_treatment_status(treatment_id: int, *, status: str) -> dict[str, Any]:
+    if status not in {"active", "completed", "cancelled"}:
+        raise ValueError(f"Invalid treatment status: {status!r}")
+
+    now = _utc_now()
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE patient_treatments
+            SET status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (status, now, treatment_id),
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"Treatment not found: {treatment_id}")
+
+    treatment = get_treatment(treatment_id)
+    assert treatment is not None
+    return treatment
+
+
+def complete_active_treatment(patient_id: int) -> dict[str, Any] | None:
+    active = get_active_treatment(patient_id)
+    if active is None:
+        return None
+    return update_treatment_status(int(active["id"]), status="completed")
+
+
+def cancel_active_treatment(patient_id: int) -> dict[str, Any] | None:
+    active = get_active_treatment(patient_id)
+    if active is None:
+        return None
+    return update_treatment_status(int(active["id"]), status="cancelled")

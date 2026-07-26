@@ -115,7 +115,7 @@ def main() -> None:
 
     treatment_start = "2026-03-01"
     planned = build_initial_follow_up_dates(date.fromisoformat(treatment_start))
-    runner.eq("schedule_has_six_steps", len(planned), 6)
+    runner.eq("schedule_has_five_steps", len(planned), 5)
     runner.eq("first_check_in_10d", planned[0][1], date(2026, 3, 11))
     runner.eq("second_check_in_20d", planned[1][1], date(2026, 3, 21))
 
@@ -134,10 +134,12 @@ def main() -> None:
         runner.eq("patient_phone", text_result.phone_number, "+998901234567")
         runner.check("unique_patient_id", text_result.patient_id > 0, str(text_result.patient_id))
         runner.check("medical_record_created", text_result.medical_record_id is not None, "")
-        runner.eq("follow_up_count", text_result.follow_up_count, 7)
+        runner.eq("follow_up_count", text_result.follow_up_count, 6)
         runner.eq("first_follow_up_date", text_result.follow_up_dates[0], "2026-03-11")
-        expected_sixth = planned[5][1].isoformat()
-        runner.eq("sixth_follow_up_date", text_result.follow_up_dates[5], expected_sixth)
+        from app.services.follow_up_scheduler import add_months
+
+        expected_recurring = add_months(planned[4][1], 6).isoformat()
+        runner.eq("sixth_follow_up_date", text_result.follow_up_dates[5], expected_recurring)
 
         records = get_medical_history(text_result.patient_id)
         runner.check("consultation_record", any(r["record_type"] == "consultation" for r in records), "")
@@ -181,7 +183,7 @@ def main() -> None:
     )
     runner.true("contact_creation", contact_result is not None and contact_result.created)
     if contact_result:
-        runner.eq("contact_follow_ups", contact_result.follow_up_count, 7)
+        runner.eq("contact_follow_ups", contact_result.follow_up_count, 6)
 
     # 5. Voice input (mocked transcription)
     with patch(
@@ -196,7 +198,7 @@ def main() -> None:
     runner.true("voice_creation", voice_result is not None and voice_result.created)
     if voice_result:
         runner.eq("voice_name", voice_result.full_name, "Dilnoza Karimova")
-        runner.eq("voice_follow_ups", voice_result.follow_up_count, 7)
+        runner.eq("voice_follow_ups", voice_result.follow_up_count, 6)
 
     # 6. OCR input (mocked vision)
     with patch("app.services.patient_intake.service.extract_patient_from_image") as mock_ocr:
@@ -213,7 +215,7 @@ def main() -> None:
         )
     runner.true("ocr_creation", ocr_result is not None and ocr_result.created)
     if ocr_result:
-        runner.eq("ocr_follow_ups", ocr_result.follow_up_count, 7)
+        runner.eq("ocr_follow_ups", ocr_result.follow_up_count, 6)
 
     # 7. Reminder jobs — due follow-ups queryable
     due = list_due_follow_ups(as_of_date="2026-03-11")
@@ -226,7 +228,7 @@ def main() -> None:
     # 8. Persistence across restart
     init_db()
     reloaded = list_follow_ups_for_patient(text_result.patient_id) if text_result else []
-    runner.eq("survives_restart", len(reloaded), 7)
+    runner.eq("survives_restart", len(reloaded), 6)
 
     # 9. Telegram handler integration
     async def run_text_handler() -> str:
@@ -292,7 +294,7 @@ def main() -> None:
     )
     runner.eq("api_create_status", create_resp.status_code, 200)
     create_body = create_resp.json()
-    runner.eq("api_create_follow_ups", create_body["follow_up_count"], 7)
+    runner.eq("api_create_follow_ups", create_body["follow_up_count"], 6)
     runner.true("api_treatment_started", create_body["treatment_started"])
 
     mobile_resp = client.post(

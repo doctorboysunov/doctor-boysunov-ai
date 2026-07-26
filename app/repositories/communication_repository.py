@@ -348,3 +348,25 @@ def list_patients_without_reply(
             (since_iso, source_type),
         ).fetchall()
     return [int(row["patient_id"]) for row in rows]
+
+
+def get_pending_follow_up_reply_delivery(patient_id: int) -> dict[str, Any] | None:
+    """Most recent follow-up delivery awaiting a patient reply."""
+    columns = ", ".join(_DELIVERY_COLUMNS)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT {columns}
+            FROM communication_deliveries
+            WHERE patient_id = ?
+              AND source_type = 'follow_up'
+              AND status IN ('sent', 'delivered')
+              AND replied_at IS NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (patient_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_delivery(row)
