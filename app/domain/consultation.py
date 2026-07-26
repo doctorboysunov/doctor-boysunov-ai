@@ -21,7 +21,14 @@ ComplaintCategory = Literal[
     "other_neurological",
 ]
 
-ConsultationPhase = Literal["collecting", "complete", "emergency"]
+ConsultationPhase = Literal[
+    "collecting",
+    "awaiting_help_choice",
+    "awaiting_session_choice",
+    "awaiting_complaint_clarification",
+    "complete",
+    "emergency",
+]
 
 COMPLAINT_LABELS: dict[str, str] = {
     "headache": "Bosh og'rig'i",

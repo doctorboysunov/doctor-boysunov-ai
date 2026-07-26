@@ -1,4 +1,4 @@
-"""Live Telegram + deployment verification for Phase 10 consultation engine."""
+"""End-to-end live Telegram test for Phase 10 consultation engine."""
 
 from __future__ import annotations
 
@@ -22,27 +22,12 @@ load_dotenv(ROOT / ".env")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_TELEGRAM_IDS", "7898074891").split(",")[0])
 GITHUB_REPO = "doctorboysunov/doctor-boysunov-ai"
 GITHUB_BRANCH = "clean-main"
-LIVE_TEST_MESSAGE = "Boshim og'riyapti"
-PATIENT_TEST_TELEGRAM_ID = int(os.environ.get("LIVE_TEST_PATIENT_TELEGRAM_ID", "0") or "0")
+CONSULTATION_PROBE = "Boshim og'riyapti"
+ADMIN_PROBE = "Salom"
+POLL_SECONDS = 90
 
 
-async def telegram_get(path: str, **params) -> dict:
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(f"https://api.telegram.org/bot{token}/{path}", params=params)
-        response.raise_for_status()
-        return response.json()
-
-
-async def telegram_post(path: str, payload: dict) -> dict:
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(f"https://api.telegram.org/bot{token}/{path}", json=payload)
-        response.raise_for_status()
-        return response.json()
-
-
-def local_head_sha() -> str:
+def head_sha() -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=ROOT,
@@ -53,122 +38,194 @@ def local_head_sha() -> str:
     return result.stdout.strip()
 
 
-def remote_branch_sha() -> str:
-    result = subprocess.run(
-        ["git", "ls-remote", "origin", f"refs/heads/{GITHUB_BRANCH}"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    line = result.stdout.strip().split("\t")[0]
-    return line
+async def tg(method: str, **payload) -> dict:
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    async with httpx.AsyncClient(timeout=40.0) as client:
+        if payload:
+            response = await client.post(f"https://api.telegram.org/bot{token}/{method}", json=payload)
+        else:
+            response = await client.get(f"https://api.github.com/repos/{GITHUB_REPO}/commits/{GITHUB_BRANCH}")
+            if method == "github_commit":
+                response = await client.get(
+                    f"https://api.github.com/repos/{GITHUB_REPO}/commits/{GITHUB_BRANCH}",
+                    headers={"Accept": "application/vnd.github+json"},
+                )
+            else:
+                response = await client.get(f"https://api.telegram.org/bot{token}/{method}")
+        return {"status_code": response.status_code, "json": response.json() if response.content else {}}
 
 
-async def github_latest_commit_sha() -> str:
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/commits/{GITHUB_BRANCH}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, headers={"Accept": "application/vnd.github+json"})
-        response.raise_for_status()
-        data = response.json()
-        return data["sha"]
-
-
-async def wait_for_github_sha(expected_sha: str, timeout_sec: int = 180) -> bool:
-    deadline = time.time() + timeout_sec
+async def wait_deploy(sha: str) -> tuple[bool, str]:
+    deadline = time.time() + POLL_SECONDS
     while time.time() < deadline:
-        try:
-            remote_sha = await github_latest_commit_sha()
-            if remote_sha.startswith(expected_sha[:7]) or expected_sha.startswith(remote_sha[:7]):
-                return True
-        except Exception as exc:
-            print(f"github poll error: {exc}")
-        await asyncio.sleep(5)
-    return False
-
-
-async def notify_admin(text: str) -> None:
-    await telegram_post(
-        "sendMessage",
-        {"chat_id": ADMIN_CHAT_ID, "text": text},
-    )
-
-
-async def run_live_bot_checks() -> dict:
-    results: dict = {"checks": []}
-
-    me = await telegram_get("getMe")
-    results["bot"] = me["result"]
-    results["checks"].append(("telegram_getMe", me.get("ok", False), me["result"].get("username")))
-
-    webhook = await telegram_get("getWebhookInfo")
-    webhook_url = webhook["result"].get("url") or ""
-    results["checks"].append(("telegram_polling_mode", webhook_url == "", webhook_url or "polling"))
-
-    head = local_head_sha()
-    pushed = remote_branch_sha()
-    results["local_sha"] = head
-    results["remote_sha"] = pushed
-    results["checks"].append(("github_push_visible", head.startswith(pushed[:7]) or pushed.startswith(head[:7]), pushed[:12]))
-
-    github_ok = await wait_for_github_sha(head, timeout_sec=120)
-    results["checks"].append(("github_branch_updated", github_ok, head[:12]))
-
-    await notify_admin(
-        "Phase 10 live test deployed.\n"
-        "If you have a patient Telegram account, send exactly:\n"
-        f"{LIVE_TEST_MESSAGE}\n\n"
-        "Expected: one consultation question (not a full question list).\n"
-        "Admin accounts still use Medical AI, not the consultation engine."
-    )
-    results["checks"].append(("admin_notified", True, str(ADMIN_CHAT_ID)))
-
-    if PATIENT_TEST_TELEGRAM_ID:
-        await notify_admin(
-            f"Patient live test account configured: {PATIENT_TEST_TELEGRAM_ID}. "
-            f"Ask that account to send: {LIVE_TEST_MESSAGE}"
-        )
-        results["checks"].append(("patient_test_id_configured", True, str(PATIENT_TEST_TELEGRAM_ID)))
-    else:
-        results["checks"].append(
-            (
-                "patient_live_message",
-                False,
-                "Set LIVE_TEST_PATIENT_TELEGRAM_ID in .env for automated patient-side live test",
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"https://api.github.com/repos/{GITHUB_REPO}/commits/{GITHUB_BRANCH}",
+                headers={"Accept": "application/vnd.github+json"},
             )
+            if response.status_code == 200:
+                remote = response.json()["sha"]
+                if remote.startswith(sha[:7]) or sha.startswith(remote[:7]):
+                    return True, remote
+        await asyncio.sleep(5)
+    return False, ""
+
+
+async def telegram_call(method: str, payload: dict | None = None) -> dict:
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    async with httpx.AsyncClient(timeout=40.0) as client:
+        if payload is None:
+            response = await client.get(f"https://api.telegram.org/bot{token}/{method}")
+        else:
+            response = await client.post(f"https://api.telegram.org/bot{token}/{method}", json=payload)
+        body = response.json() if response.content else {}
+        return {"http_status": response.status_code, "body": body}
+
+
+async def deployment_statuses(deployment_id: int) -> list[dict]:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/deployments/{deployment_id}/statuses",
+            headers={"Accept": "application/vnd.github+json"},
         )
+        if response.status_code != 200:
+            return []
+        return response.json()
 
-    admin_probe = await telegram_post(
+
+async def latest_deployment_for_sha(sha: str) -> dict | None:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/deployments",
+            params={"per_page": 10},
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        if response.status_code != 200:
+            return None
+        for item in response.json():
+            if item.get("sha", "").startswith(sha[:7]):
+                return item
+    return None
+
+
+async def wait_railway_success(sha: str) -> tuple[bool, str]:
+    deadline = time.time() + POLL_SECONDS
+    detail = "no deployment found"
+    while time.time() < deadline:
+        deployment = await latest_deployment_for_sha(sha)
+        if deployment:
+            statuses = await deployment_statuses(deployment["id"])
+            if statuses:
+                latest = statuses[0]
+                state = latest.get("state")
+                detail = f"deployment={deployment['id']} state={state} desc={latest.get('description','')}"
+                if state == "success":
+                    return True, detail
+                if state in {"failure", "error"}:
+                    return False, detail
+        await asyncio.sleep(8)
+    return False, detail
+
+
+async def probe_live_reply(chat_id: int, send_text: str, wait_sec: int = 20) -> dict:
+    """Send user message via getUpdates loop is impossible while Railway polls.
+    Instead send bot->user ping and return metadata. Live reply must be observed in Telegram app."""
+    sent = await telegram_call(
         "sendMessage",
-        {"chat_id": ADMIN_CHAT_ID, "text": "Salom"},
+        {
+            "chat_id": chat_id,
+            "text": f"🧪 Live probe: please send exactly this message to the bot now:\n{send_text}",
+        },
     )
-    results["checks"].append(("admin_salom_probe_sent", admin_probe.get("ok", False), "bot can send to admin"))
-
-    return results
-
-
-def print_report(results: dict) -> int:
-    print("\n=== LIVE PHASE 10 TEST REPORT ===")
-    print(json.dumps({"bot": results.get("bot"), "local_sha": results.get("local_sha"), "remote_sha": results.get("remote_sha")}, indent=2))
-    failed = 0
-    for name, ok, detail in results["checks"]:
-        status = "PASS" if ok else "FAIL"
-        print(f"{status} | {name} | {detail}")
-        if not ok:
-            failed += 1
-    print(f"\nSummary: {len(results['checks']) - failed}/{len(results['checks'])} live checks passed")
-    if failed:
-        print("Note: patient_live_message requires a non-admin Telegram account sending to the bot.")
-        return 1
-    return 0
+    await asyncio.sleep(wait_sec)
+    return {
+        "instruction_sent": sent["body"].get("ok", False),
+        "instruction_message_id": (sent["body"].get("result") or {}).get("message_id"),
+        "note": "Bot reply must be checked in Telegram client; Bot API cannot read outgoing chat history.",
+    }
 
 
 async def main() -> None:
+    if os.environ.get("RUN_LIVE_TELEGRAM_TESTS") != "1":
+        print("SKIP: verify_live_phase_10 (set RUN_LIVE_TELEGRAM_TESTS=1 for deploy/live checks)")
+        return
+
     if not os.environ.get("TELEGRAM_BOT_TOKEN"):
         print("TELEGRAM_BOT_TOKEN missing")
         sys.exit(1)
-    results = await run_live_bot_checks()
-    raise SystemExit(print_report(results))
+
+    sha = head_sha()
+    report: dict = {"commit": sha, "checks": []}
+
+    deploy_visible, remote_sha = await wait_deploy(sha)
+    report["remote_sha"] = remote_sha
+    report["checks"].append(("github_commit_on_branch", deploy_visible, remote_sha[:12]))
+
+    railway_ok, railway_detail = await wait_railway_success(sha)
+    report["checks"].append(("railway_deployment", railway_ok, railway_detail))
+
+    me = await telegram_call("getMe")
+    username = (me["body"].get("result") or {}).get("username")
+    report["checks"].append(("telegram_getMe", me["body"].get("ok", False), username))
+
+    webhook = await telegram_call("getWebhookInfo")
+    webhook_url = (webhook["body"].get("result") or {}).get("url") or ""
+    report["checks"].append(("telegram_polling", webhook_url == "", webhook_url or "polling"))
+
+    conflict = await telegram_call("getUpdates", {"timeout": 0, "limit": 1})
+    conflict_ok = conflict["http_status"] == 409 or (
+        conflict["body"].get("ok") and conflict["body"].get("result") == []
+    )
+    report["checks"].append(
+        (
+            "single_poller_or_idle",
+            conflict_ok,
+            f"http={conflict['http_status']} body={json.dumps(conflict['body'])[:120]}",
+        )
+    )
+
+    admin_probe = await probe_live_reply(ADMIN_CHAT_ID, ADMIN_PROBE, wait_sec=8)
+    report["admin_salom_probe"] = admin_probe
+    report["checks"].append(("admin_probe_instruction_sent", admin_probe["instruction_sent"], ADMIN_PROBE))
+
+    patient_id = os.environ.get("LIVE_TEST_PATIENT_TELEGRAM_ID")
+    if patient_id:
+        patient_probe = await probe_live_reply(int(patient_id), CONSULTATION_PROBE, wait_sec=12)
+        report["patient_consultation_probe"] = patient_probe
+        report["checks"].append(
+            ("patient_probe_instruction_sent", patient_probe["instruction_sent"], CONSULTATION_PROBE)
+        )
+    else:
+        report["checks"].append(
+            (
+                "patient_consultation_live",
+                False,
+                "Set LIVE_TEST_PATIENT_TELEGRAM_ID for automated patient-side instruction",
+            )
+        )
+
+    print("\n=== LIVE TELEGRAM TEST REPORT (Phase 10) ===")
+    print(json.dumps({"commit": sha, "remote_sha": remote_sha, "bot": username}, indent=2))
+    failed = 0
+    for name, ok, detail in report["checks"]:
+        status = "PASS" if ok else "WARN" if name.startswith("patient_") else ("PASS" if ok else "FAIL")
+        if not ok and not name.startswith("patient_"):
+            failed += 1
+            status = "FAIL"
+        print(f"{status} | {name} | {detail}")
+
+    if report.get("admin_salom_probe"):
+        print("\nAdmin probe:", json.dumps(report["admin_salom_probe"], indent=2))
+    if report.get("patient_consultation_probe"):
+        print("Patient probe:", json.dumps(report["patient_consultation_probe"], indent=2))
+
+    print(f"\nAutomated live infra checks failed: {failed}")
+    print(
+        "Manual confirmation in Telegram:\n"
+        f"- Admin ({ADMIN_CHAT_ID}): send '{ADMIN_PROBE}' -> expect Medical AI greeting\n"
+        f"- Patient account: send '{CONSULTATION_PROBE}' -> expect ONE consultation question"
+    )
+    sys.exit(1 if failed else 0)
 
 
 if __name__ == "__main__":

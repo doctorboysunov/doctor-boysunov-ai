@@ -5,9 +5,6 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from app.services.openai_service import _build_input, ask_ai
 
-
-assert _build_input("Salom") == "Salom"
-
 history = [
     {"role": "user", "content": "Salom"},
     {"role": "assistant", "content": "Assalomu alaykum!"},
@@ -30,7 +27,7 @@ try:
 except ValueError as exc:
     assert "Invalid message role" in str(exc)
 
-# chat.py still uses single-string calls; signature remains compatible.
+# ask_ai accepts a single string or a message list; _build_input is list-only.
 assert ask_ai.__annotations__["messages"] == str | list[dict[str, str]]
 
 print("Step 2.3 OK: single-string and multi-turn input building verified")

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.domain.conversation_mode import resolve_conversation_mode_with_reason
+from app.domain.admin_conversation_state import registration_mode_active
 from app.services.patient_intake.clinical_form import is_clinical_form_text
 from app.services.patient_intake.extraction import extract_patient_from_text
 from app.services.routing_trace import RoutingTrace
@@ -62,7 +63,10 @@ def resolve_incoming_message_flow(
             detail=f"clinical_form={clinical_form} extracted={extracted is not None}",
         )
 
-    priority1 = is_admin and patient_intake_detected
+    priority1 = is_admin and (
+        clinical_form
+        or (patient_intake_detected and registration_mode_active(telegram_id))
+    )
     if trace is not None:
         trace.check(
             location="conversation_flow.py",

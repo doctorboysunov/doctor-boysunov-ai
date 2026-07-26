@@ -490,7 +490,14 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
                 patient_id INTEGER NOT NULL REFERENCES users(id),
                 visit_id INTEGER NOT NULL REFERENCES emr_visits(id),
                 complaint_category TEXT NOT NULL,
-                phase TEXT NOT NULL CHECK (phase IN ('collecting', 'complete', 'emergency')),
+                phase TEXT NOT NULL CHECK (phase IN (
+                    'collecting',
+                    'awaiting_help_choice',
+                    'awaiting_session_choice',
+                    'awaiting_complaint_clarification',
+                    'complete',
+                    'emergency'
+                )),
                 asked_question_ids TEXT NOT NULL DEFAULT '[]',
                 answers_json TEXT NOT NULL DEFAULT '{}',
                 current_question_id TEXT,
@@ -502,6 +509,154 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
                 ON consultation_sessions(patient_id, phase, id DESC);
             """
         )
+
+    if "consultation_sessions" in tables:
+        ddl_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='consultation_sessions'"
+        ).fetchone()
+        ddl = (ddl_row[0] if ddl_row else "") or ""
+        if "awaiting_complaint_clarification" not in ddl:
+            conn.executescript(
+                """
+                CREATE TABLE consultation_sessions_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    patient_id INTEGER NOT NULL REFERENCES users(id),
+                    visit_id INTEGER NOT NULL REFERENCES emr_visits(id),
+                    complaint_category TEXT NOT NULL,
+                    phase TEXT NOT NULL CHECK (phase IN (
+                        'collecting',
+                        'awaiting_help_choice',
+                        'awaiting_session_choice',
+                        'awaiting_complaint_clarification',
+                        'complete',
+                        'emergency'
+                    )),
+                    asked_question_ids TEXT NOT NULL DEFAULT '[]',
+                    answers_json TEXT NOT NULL DEFAULT '{}',
+                    current_question_id TEXT,
+                    summary_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                INSERT INTO consultation_sessions_new
+                SELECT * FROM consultation_sessions;
+                DROP TABLE consultation_sessions;
+                ALTER TABLE consultation_sessions_new RENAME TO consultation_sessions;
+                CREATE INDEX IF NOT EXISTS idx_consultation_sessions_patient
+                    ON consultation_sessions(patient_id, phase, id DESC);
+                """
+            )
+
+    if "conversations" in tables:
+        conversation_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+        }
+        for column_name, column_def in (
+            ("channel", "TEXT NOT NULL DEFAULT 'telegram'"),
+            ("external_thread_id", "TEXT"),
+            ("summary", "TEXT"),
+            ("closed_at", "TEXT"),
+            ("updated_at", "TEXT"),
+        ):
+            if column_name not in conversation_columns:
+                conn.execute(
+                    f"ALTER TABLE conversations ADD COLUMN {column_name} {column_def}"
+                )
+        conn.execute(
+            """
+            UPDATE conversations
+            SET updated_at = created_at
+            WHERE updated_at IS NULL OR updated_at = ''
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_conversations_user_channel
+            ON conversations(user_id, channel, status, id DESC)
+            """
+        )
+
+    if "patient_memories" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE patient_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                memory_key TEXT NOT NULL,
+                memory_value TEXT NOT NULL,
+                source_message_id INTEGER REFERENCES messages(id),
+                confidence REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(user_id, memory_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_patient_memories_user_id
+                ON patient_memories(user_id, memory_key);
+            """
+        )
+        tables.add("patient_memories")
+
+    if "user_channel_identities" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE user_channel_identities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                channel TEXT NOT NULL CHECK (
+                    channel IN ('telegram', 'instagram', 'whatsapp', 'facebook', 'web', 'mobile')
+                ),
+                external_id TEXT NOT NULL,
+                display_name TEXT,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(channel, external_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_channel_identities_user_id
+                ON user_channel_identities(user_id, channel);
+            """
+        )
+        tables.add("user_channel_identities")
+
+        # Backfill Telegram identities from existing users.
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO user_channel_identities (
+                user_id, channel, external_id, display_name, created_at, updated_at
+            )
+            SELECT
+                id,
+                'telegram',
+                CAST(telegram_id AS TEXT),
+                COALESCE(full_name, username),
+                created_at,
+                created_at
+            FROM users
+            WHERE telegram_id IS NOT NULL
+            """
+        )
+
+    if "emr_visits" in tables:
+        emr_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(emr_visits)").fetchall()
+        }
+        for column_name, column_def in (
+            ("ai_assessment_json", "TEXT"),
+            ("ai_review_status", "TEXT NOT NULL DEFAULT 'none'"),
+            ("doctor_reviewed_at", "TEXT"),
+            ("doctor_reviewed_by", "TEXT"),
+            ("urgency", "TEXT"),
+            ("primary_specialty", "TEXT"),
+            ("secondary_specialties_json", "TEXT"),
+        ):
+            if column_name not in emr_columns:
+                conn.execute(
+                    f"ALTER TABLE emr_visits ADD COLUMN {column_name} {column_def}"
+                )
 
 
 def init_db() -> None:

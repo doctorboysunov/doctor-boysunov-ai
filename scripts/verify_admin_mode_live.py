@@ -92,6 +92,9 @@ async def main_async(runner: TestRunner) -> None:
     init_db()
     bootstrap_admin_registry()
 
+    runner.true = lambda name, value: runner.check(name, bool(value), repr(value))
+    runner.false = lambda name, value: runner.check(name, not value, repr(value))
+
     extracted = extract_patient_from_text("Ali Valiyev 701041101")
     runner.check("phone_701041101_extracts", extracted is not None, repr(extracted))
     if extracted:
@@ -100,13 +103,11 @@ async def main_async(runner: TestRunner) -> None:
     runner.check("admin_disabled_without_config", not is_admin(DOCTOR_ID), "")
 
     ask_ai_mock = MagicMock(return_value="Shikoyatingiz nima?")
-    with patch("app.services.message_router.ask_ai", ask_ai_mock):
-        with patch("app.services.message_router.handle_appointment_flow", AsyncMock(return_value=False)):
-            with patch("app.services.message_router.handle_location_registration_text", AsyncMock(return_value=False)):
-                    await chat(FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101"), FakeContext())
+    with patch("app.handlers.chat.ask_ai", ask_ai_mock):
+        pre_claim_update = FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101")
+        await chat(pre_claim_update, FakeContext())
 
-    runner.true = lambda name, value: runner.check(name, bool(value), repr(value))
-    runner.true("bug_repro_patient_mode_calls_ai", ask_ai_mock.called)
+    runner.false("bug_repro_no_ai_before_claim", ask_ai_mock.called)
 
     claim_update = FakeUpdate(DOCTOR_ID, "")
     claim_context = FakeContext()
@@ -118,27 +119,24 @@ async def main_async(runner: TestRunner) -> None:
     runner.true("admin_enabled_after_claim", is_admin(DOCTOR_ID))
 
     ask_ai_mock.reset_mock()
-    with patch("app.services.message_router.ask_ai", ask_ai_mock):
-        with patch("app.services.message_router.register_telegram_user", return_value=DOCTOR_ID):
-            with patch("app.services.message_router.get_or_create_active_conversation", return_value=1):
-                with patch("app.services.message_router.get_last_messages", return_value=[]):
-                    with patch("app.services.message_router.get_or_create_patient_profile", return_value={}):
-                        with patch("app.services.message_router.save_message"):
-                            free_context = FakeContext()
-                            free_update = FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101")
-                            await chat(free_update, free_context)
-                            free_reply = free_update.message.reply_text.await_args.args[0]
+    with patch("app.handlers.chat.ask_ai", ask_ai_mock):
+        with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+            free_context = FakeContext()
+            free_update = FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101")
+            await chat(free_update, free_context)
+            free_reply = free_update.message.reply_text.await_args.args[0]
 
     runner.check("admin_free_name_phone_uses_ai", ask_ai_mock.called, "ask_ai was not called")
     runner.check("admin_free_name_phone_not_created", "Patient created" not in free_reply, free_reply)
 
     ask_ai_mock.reset_mock()
-    reg_context = FakeContext()
-    enter_patient_registration_mode(reg_context, admin_telegram_id=DOCTOR_ID)
-    with patch("app.services.message_router.ask_ai", ask_ai_mock):
-        update = FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101")
-        await chat(update, reg_context)
-        reply = update.message.reply_text.await_args.args[0]
+    with patch("app.handlers.chat.ask_ai", ask_ai_mock):
+        with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+            reg_context = FakeContext()
+            enter_patient_registration_mode(reg_context, admin_telegram_id=DOCTOR_ID)
+            update = FakeUpdate(DOCTOR_ID, "Ali Valiyev 701041101")
+            await chat(update, reg_context)
+            reply = update.message.reply_text.await_args.args[0]
 
     runner.check("admin_mode_no_ai", not ask_ai_mock.called, "ask_ai was called")
     runner.check("confirmation_patient_created", "Patient created" in reply, reply)

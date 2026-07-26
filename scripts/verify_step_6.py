@@ -20,7 +20,7 @@ os.environ["DATABASE_PATH"] = str(TEST_DB)
 os.environ["PATIENT_INTAKE_API_KEY"] = "test-intake-key"
 os.environ["ADMIN_TELEGRAM_IDS"] = "930001"
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "intake-test-token")
-os.environ.setdefault("OPENAI_API_KEY", "intake-test-key")
+os.environ["OPENAI_API_KEY"] = "intake-test-key"
 
 sys.path.insert(0, str(ROOT))
 
@@ -155,12 +155,17 @@ def main() -> None:
     reply = asyncio.run(run_contact())
     runner.check("telegram_contact_capture", "Patient ID" in reply, reply)
 
-    async def run_text_capture() -> bool:
-        update = FakeUpdate(FakeMessage(text="Sardor Karimov 909876543"))
-        return await handle_admin_chat_text(update, FakeContext())
+    async def run_text_capture() -> str:
+        from app.domain.admin_conversation_state import enter_patient_registration_mode  # noqa: E402
 
-    captured = asyncio.run(run_text_capture())
-    runner.true("telegram_text_capture", captured)
+        ctx = FakeContext()
+        enter_patient_registration_mode(ctx, admin_telegram_id=930001)
+        update = FakeUpdate(FakeMessage(text="Sardor Karimov 909876543"))
+        await handle_admin_chat_text(update, ctx)
+        return update.message.reply_text.await_args.args[0]
+
+    capture_reply = asyncio.run(run_text_capture())
+    runner.check("telegram_text_capture", "Patient ID" in capture_reply, capture_reply)
 
     with patch(
         "app.services.patient_intake.service.transcribe_audio",

@@ -20,7 +20,12 @@ def get_active_session(patient_id: int) -> ConsultationSession | None:
             """
             SELECT *
             FROM consultation_sessions
-            WHERE patient_id = ? AND phase = 'collecting'
+            WHERE patient_id = ? AND phase IN (
+                'collecting',
+                'awaiting_help_choice',
+                'awaiting_session_choice',
+                'awaiting_complaint_clarification'
+            )
             ORDER BY id DESC
             LIMIT 1
             """,

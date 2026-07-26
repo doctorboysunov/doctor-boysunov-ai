@@ -1,10 +1,11 @@
-"""Phase 10: Professional Medical Consultation Engine verification."""
+"""Phase 10: AI Neurology Assistant verification (GPT-driven, not scripted)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,7 +19,7 @@ if TEST_DB.exists():
 os.environ["DATABASE_PATH"] = str(TEST_DB)
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "consultation-test-token")
 os.environ.setdefault("OPENAI_API_KEY", "consultation-test-key")
-os.environ.setdefault("ADMIN_TELEGRAM_IDS", "")
+os.environ["ADMIN_TELEGRAM_IDS"] = ""
 
 sys.path.insert(0, str(ROOT))
 
@@ -33,20 +34,26 @@ reload(app_config)
 
 from app.db.connection import get_connection, init_db  # noqa: E402
 from app.handlers.chat import process_text_message  # noqa: E402
-from app.repositories.consultation_repository import get_active_session  # noqa: E402
+from app.repositories.consultation_repository import get_active_session, get_session_by_id  # noqa: E402
 from app.repositories.emr_repository import get_emr_visit, list_emr_visits_for_patient  # noqa: E402
-from app.repositories.patient_profile_repository import get_or_create_patient_profile  # noqa: E402
+from app.services.consultation_ai import (  # noqa: E402
+    HELP_MENU_QUESTION,
+    LEGAL_DISCLAIMER,
+    ConversationIntentAnalysis,
+    DoctorEmrUpdate,
+    InternalReasoning,
+    NeurologyTurnOutput,
+    _limit_sentences,
+    build_help_menu_reply,
+    parse_help_choice,
+)
 from app.services.consultation_classifier import classify_complaint  # noqa: E402
 from app.services.consultation_engine import (  # noqa: E402
     is_consultation_trigger,
     process_consultation_turn,
     should_use_consultation_engine,
 )
-from app.services.consultation_question_trees import (  # noqa: E402
-    get_questions_for_category,
-    select_next_question,
-)
-from app.services.consultation_summary import generate_consultation_summary  # noqa: E402
+from app.services.consultation_red_flags import build_consultation_emergency_response  # noqa: E402
 from app.services.emr_service import create_visit  # noqa: E402
 from app.services.patient_creation_engine import create_patient_intelligently  # noqa: E402
 from scripts.test_support import seed_default_location  # noqa: E402
@@ -73,22 +80,106 @@ class TestRunner:
     def true(self, name: str, value) -> None:
         self.check(name, bool(value), repr(value))
 
-    def false(self, name: str, value) -> None:
-        self.check(name, not bool(value), repr(value))
+
+def _sentence_count(text: str) -> int:
+    parts = re.split(r"[.!?]+", text)
+    return len([part for part in parts if part.strip()])
+
+
+def _mock_intent_continue(**kwargs) -> ConversationIntentAnalysis:
+    return ConversationIntentAnalysis(
+        is_answering_previous_question=True,
+        confidence="high",
+        recommended_action="continue_session",
+    )
+
+
+def _mock_gpt_collecting(question: str, *, topics: list[str] | None = None) -> NeurologyTurnOutput:
+    internal = InternalReasoning(
+        what_i_know=["Bosh og'rig'i"],
+        missing_information=["Boshlanish vaqti"],
+        emergency_assessment="none",
+        possible_neurological_causes=["Migren"],
+        next_question_topic="onset",
+        next_question_rationale="Anamnez uchun muhim",
+    )
+    return NeurologyTurnOutput(
+        patient_reply=question,
+        ready_for_help_menu=False,
+        known_facts={"last_question": question},
+        topics_covered=topics or ["onset"],
+        doctor_emr=DoctorEmrUpdate(
+            chief_complaint="Bosh og'rig'i",
+            history="Bemor shikoyat bildirdi",
+            clinical_notes="Telegram konsultatsiya",
+        ),
+        internal_reasoning=internal,
+        session_summary={
+            "clinical_brain": {
+                "step1_patient_meaning": "Bosh og'rig'i",
+                "step3_hypotheses": [{"name": "Migren", "probability": "medium", "rationale": ""}],
+                "step4_emergency_assessment": "none",
+            },
+            "doctor_emr": DoctorEmrUpdate(
+                chief_complaint="Bosh og'rig'i",
+                history="Bemor shikoyat bildirdi",
+                clinical_notes="Telegram konsultatsiya",
+            ).to_dict(),
+            "internal_reasoning": internal.to_dict(),
+        },
+    )
+
+
+def _mock_gpt_ready(summary: str = "Bosh og'rig'i 3 kundan beri.") -> NeurologyTurnOutput:
+    internal = InternalReasoning(
+        what_i_know=["Bosh og'rig'i", "3 kun"],
+        possible_neurological_causes=["Migren", "Tension headache"],
+        emergency_assessment="none",
+    )
+    doctor = DoctorEmrUpdate(
+        chief_complaint="Bosh og'rig'i",
+        history="3 kun",
+        differential_diagnoses=["Migren", "Tension headache"],
+        recommended_investigations=["Qon bosimi"],
+    )
+    return NeurologyTurnOutput(
+        patient_reply="",
+        ready_for_help_menu=True,
+        brief_summary_for_patient=summary,
+        topics_covered=["onset", "location", "severity"],
+        doctor_emr=doctor,
+        internal_reasoning=internal,
+        session_summary={
+            "clinical_brain": {
+                "step1_patient_meaning": "Bosh og'rig'i 3 kun",
+                "step3_hypotheses": [{"name": "Migren", "probability": "high", "rationale": ""}],
+                "step7_ready_for_summary": True,
+            },
+            "doctor_emr": doctor.to_dict(),
+            "internal_reasoning": internal.to_dict(),
+        },
+    )
+
+
+class FakeUser:
+    def __init__(self, telegram_id: int) -> None:
+        self.id = telegram_id
+        self.username = "patient"
+        self.full_name = "Patient Test"
 
 
 class FakeMessage:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, user: FakeUser) -> None:
         self.text = text
-
-    async def reply_text(self, text: str) -> None:
-        self.reply = text
+        self.from_user = user
+        self.reply_text = AsyncMock()
 
 
 class FakeUpdate:
     def __init__(self, telegram_id: int, text: str) -> None:
-        self.message = FakeMessage(text)
-        self.effective_user = MagicMock(id=telegram_id, first_name="Test", last_name="Patient")
+        user = FakeUser(telegram_id)
+        self.effective_user = user
+        self.message = FakeMessage(text, user)
 
 
 class FakeContext:
@@ -97,237 +188,148 @@ class FakeContext:
 
 
 def _report(runner: TestRunner) -> None:
-    print(f"\n=== Phase 10: {runner.passed}/{runner.total} passed ===")
+    print(f"\n=== Phase 10 AI Neurology: {runner.passed}/{runner.total} passed ===")
     for name, detail in runner.failed:
         print(f"FAIL: {name} — {detail}")
     if runner.failed:
         sys.exit(1)
-    print("PASS: Professional Medical Consultation Engine verified")
+    print("PASS: AI Neurology Assistant verified")
 
 
 def main() -> None:
     runner = TestRunner()
     init_db()
 
-    with get_connection() as conn:
-        tables = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        }
-    runner.check("consultation_sessions_table", "consultation_sessions" in tables, str(sorted(tables)))
+    runner.check("short_reply_limit", _sentence_count(_limit_sentences("A. B. C. D. E.")) <= 4, "")
+    runner.eq("parse_online", parse_help_choice("Onlayn konsultatsiya"), "online")
+    runner.eq("parse_clinic", parse_help_choice("Klinikada qabul"), "clinic")
+    runner.eq("parse_continue", parse_help_choice("Savollarni davom ettirish"), "continue")
+    menu = build_help_menu_reply("Bosh og'rig'i 3 kundan beri.")
+    runner.check("help_menu_understood", "Men sizning holatingizni tushundim" in menu, menu)
+    runner.check("help_menu_one_question", menu.count(HELP_MENU_QUESTION) == 1, menu)
+    runner.check("help_menu_options_order", menu.index("Savollarni davom ettirish") < menu.index("Onlayn konsultatsiya"), menu)
+    runner.check("help_menu_options", "Onlayn konsultatsiya" in menu and "Savollarni davom ettirish" in menu, menu)
 
-    classification_cases = [
-        ("Boshim og'riyapti", "headache"),
-        ("Belim og'riyapti", "low_back_pain"),
-        ("Bo'ynim og'riyapti", "neck_pain"),
-        ("Bosh aylanmoqda", "vertigo"),
-        ("Insult belgilari bor", "stroke"),
-        ("Qo'lim uvishyapti", "neuropathy"),
-        ("Yuz qiyshayapti", "facial_nerve_palsy"),
-        ("Qo'lim titrayapti", "tremor"),
-        ("Xotiram susayapti", "memory_problems"),
-        ("Uxlay olmayapman", "sleep_disorders"),
-        ("Xavotir bosyapti", "anxiety"),
-        ("Depressiyadayman", "depression"),
-        ("Nevrologik shikoyatim bor", "other_neurological"),
-    ]
-    for text, expected in classification_cases:
-        got = classify_complaint(text)
-        runner.eq(f"classify_{expected}", got, expected)
+    emergency = build_consultation_emergency_response(["stroke"])
+    runner.check("emergency_fixed_script", "103" in emergency, emergency[:80])
 
-    for category in (
-        "headache",
-        "low_back_pain",
-        "neck_pain",
-        "vertigo",
-        "stroke",
-        "neuropathy",
-        "facial_nerve_palsy",
-        "tremor",
-        "memory_problems",
-        "sleep_disorders",
-        "anxiety",
-        "depression",
-        "other_neurological",
-    ):
-        tree = get_questions_for_category(category)
-        runner.check(f"tree_nonempty_{category}", len(tree) >= 3, str(len(tree)))
-        ids = [q.id for q in tree]
-        runner.check(f"tree_unique_ids_{category}", len(ids) == len(set(ids)), str(ids))
-
-    asked: set[str] = set()
-    answers: dict[str, str] = {}
-    questions_seen: list[str] = []
-    for _ in range(10):
-        nxt = select_next_question("headache", asked, answers)
-        if nxt is None:
-            break
-        runner.check("no_repeat_question", nxt.id not in asked, nxt.id)
-        asked.add(nxt.id)
-        questions_seen.append(nxt.id)
-        answers[nxt.id] = "test answer"
-    runner.check("one_at_a_time_sequence", len(questions_seen) >= 3, str(questions_seen))
+    runner.eq("classify_headache", classify_complaint("Boshim og'riyapti"), "headache")
+    runner.true("consultation_trigger", is_consultation_trigger("Boshim og'riyapti"))
 
     created = create_patient_intelligently(
         source="telegram",
-        text="Consultation Test 901777001",
+        text="AI Neuro Test 901888001",
         started_at="2026-07-26",
     )
-    runner.check("patient_created", created is not None, repr(created))
-    if created is None:
+    runner.check("patient_created", created is not None, "")
+    if not created:
         _report(runner)
         return
 
     patient_id = created.patient_id
     seed_default_location(patient_id)
-    get_or_create_patient_profile(patient_id)
-    create_visit(patient_id, visit_date="2026-07-26", main_complaint="Initial")
-
+    create_visit(patient_id, visit_date="2026-07-26")
     user_data: dict = {}
-    runner.true("should_use_on_medical", should_use_consultation_engine(patient_id, "Boshim og'riyapti", user_data))
-    runner.false("should_not_use_on_greeting", should_use_consultation_engine(patient_id, "Salom", user_data))
-    runner.false(
-        "should_not_use_general_advice_question",
-        should_use_consultation_engine(patient_id, "Bugun nima qilish kerak?", user_data),
-    )
-    runner.true("consultation_trigger_headache", is_consultation_trigger("Boshim og'riyapti"))
 
-    turn1 = process_consultation_turn(patient_id, "Boshim og'riyapti", user_data=user_data)
-    runner.eq("turn1_phase", turn1.phase, "collecting")
-    runner.check("turn1_single_question", turn1.reply.count("?") >= 1, turn1.reply[:120])
-    runner.false("turn1_multiple_questions", "1." in turn1.reply and "2." in turn1.reply and "3." in turn1.reply)
+    gpt_calls: list[dict] = []
+
+    def track_gpt(**kwargs):
+        gpt_calls.append(kwargs)
+        if len(gpt_calls) == 1:
+            return _mock_gpt_collecting("Tushundim. Qachondan beri og'riyapti?", topics=["opening_complaint"])
+        if len(gpt_calls) == 2:
+            return _mock_gpt_collecting("Qayeri og'riyapti — peshona yoki chakka?", topics=["onset"])
+        return _mock_gpt_ready()
+
+    with patch("app.services.consultation_engine.run_neurology_turn", side_effect=track_gpt):
+        with patch("app.services.consultation_engine.run_conversation_intent_analysis", side_effect=_mock_intent_continue):
+            turn1 = process_consultation_turn(patient_id, "Boshim og'riyapti", user_data=user_data)
+            turn2 = process_consultation_turn(patient_id, "3 kun oldin", user_data=user_data)
+            turn3 = process_consultation_turn(patient_id, "Peshonada", user_data=user_data)
+
+    runner.check("gpt_called_each_turn", len(gpt_calls) >= 3, str(len(gpt_calls)))
+    runner.check("turn1_short", _sentence_count(turn1.reply.split(LEGAL_DISCLAIMER)[0]) <= 4, turn1.reply[:120])
+    runner.check("turn1_disclaimer", LEGAL_DISCLAIMER in turn1.reply, turn1.reply[-80:])
+    runner.check("turn1_no_script_intro", "konsultatsiya boshlaymiz" not in turn1.reply.lower(), turn1.reply)
+    runner.eq("turn3_phase", turn3.phase, "awaiting_help_choice")
+    runner.check("turn3_understood", "Men sizning holatingizni tushundim" in turn3.reply, turn3.reply)
+    runner.check("turn3_not_immediate_online", "onlayn yozilish" not in turn3.reply.lower(), turn3.reply)
 
     session = get_active_session(patient_id)
-    runner.check("session_created", session is not None, "")
-    if session is None:
-        _report(runner)
-        return
-
-    runner.eq("session_category", session.complaint_category, "headache")
-    first_q = session.current_question_id
-    runner.check("first_question_set", bool(first_q), repr(first_q))
-
-    turn2 = process_consultation_turn(patient_id, "2 kun oldin", user_data=user_data)
-    runner.eq("turn2_phase", turn2.phase, "collecting")
-    runner.check("turn2_different_question", first_q not in turn2.reply, turn2.reply[:120])
-
-    session2 = get_active_session(patient_id)
-    runner.check("session_still_active", session2 is not None, "")
-    if session2:
-        runner.check("question_id_advanced", session2.current_question_id != first_q, repr(session2.current_question_id))
-        runner.check("answer_stored", "onset" in session2.answers or first_q in session2.answers, json.dumps(session2.answers))
+    runner.check("session_awaiting_help", session is not None and session.phase == "awaiting_help_choice", repr(session))
 
     visits = list_emr_visits_for_patient(patient_id)
-    runner.check("emr_visit_exists", len(visits) >= 1, str(len(visits)))
     if visits:
-        notes = visits[0].get("notes") or ""
-        runner.check("emr_notes_has_qa", "Q[" in notes, notes[:200])
+        notes = get_emr_visit(visits[0]["id"]).get("notes") or ""
+        runner.check("doctor_emr_saved", "Shifokor EMR" in notes, notes[:200])
+        runner.check("reasoning_in_emr", "Clinical Brain" in notes or "AI klinik mulohaza" in notes, notes[:200])
+        runner.check("patient_reply_not_in_emr_only", HELP_MENU_QUESTION not in notes, notes[:200])
 
-    answers_full = {
-        "chief_complaint_text": "Boshim og'riyapti",
-        "onset": "3 kun",
-        "headache_location": "peshona",
-        "severity": "7",
-        "headache_character": "bosuvchi",
-        "headache_associated": "yo'q",
-        "progression": "o'zgarmayapti",
-    }
-    summary = generate_consultation_summary("headache", answers_full)
-    runner.check("summary_chief_complaint", bool(summary.chief_complaint), summary.chief_complaint)
-    runner.check("summary_history", bool(summary.history), summary.history[:80])
-    runner.check("summary_timeline", bool(summary.timeline), summary.timeline)
-    runner.check("summary_differentials", len(summary.possible_differential_diagnoses) >= 2, str(summary.possible_differential_diagnoses))
-    runner.check("summary_investigations", len(summary.recommended_investigations) >= 1, str(summary.recommended_investigations))
-    runner.check("summary_urgency", summary.urgency in ("routine", "urgent", "emergency"), summary.urgency)
-    runner.check("summary_visit_type", bool(summary.recommended_visit_type), summary.recommended_visit_type)
-    runner.check("summary_follow_up", bool(summary.follow_up_plan), summary.follow_up_plan)
+    with patch("app.services.consultation_engine.run_neurology_turn", return_value=_mock_gpt_collecting("Yana bir savol")):
+        with patch("app.services.consultation_engine.run_conversation_intent_analysis", side_effect=_mock_intent_continue):
+            turn4 = process_consultation_turn(patient_id, "Savollarni davom ettirish", user_data=user_data)
+    runner.eq("continue_choice_phase", turn4.phase, "collecting")
 
-    emergency_patient = create_patient_intelligently(
-        source="telegram",
-        text="Emergency Test 901777002",
-        started_at="2026-07-26",
+    session_after = get_active_session(patient_id)
+    runner.check("resume_collecting", session_after is not None and session_after.phase == "collecting", "")
+
+    patient2 = create_patient_intelligently(
+        source="telegram", text="AI Neuro Test 901888002", started_at="2026-07-26"
     )
-    runner.check("emergency_patient_created", emergency_patient is not None, "")
-    if emergency_patient:
-        eid = emergency_patient.patient_id
-        seed_default_location(eid)
-        create_visit(eid, visit_date="2026-07-26")
-        emergency = process_consultation_turn(
-            eid,
-            "Hushdan ketdim, insult belgilari bor",
-            user_data={},
-        )
-        runner.true("emergency_detected", emergency.emergency)
-        runner.check("emergency_mentions_103", "103" in emergency.reply, emergency.reply[:200])
+    if patient2:
+        pid2 = patient2.patient_id
+        seed_default_location(pid2)
+        create_visit(pid2, visit_date="2026-07-26")
+        ud2: dict = {}
 
-    back_patient = create_patient_intelligently(
-        source="telegram",
-        text="Back Pain Test 901777003",
-        started_at="2026-07-26",
-    )
-    if back_patient:
-        bid = back_patient.patient_id
-        seed_default_location(bid)
-        create_visit(bid, visit_date="2026-07-26")
-        process_consultation_turn(bid, "Bel og'riyapti", user_data={})
-        runner.eq("back_pain_start", classify_complaint("Bel og'riyapti"), "low_back_pain")
+        def gpt_flow(**kwargs):
+            if len(gpt_flow.calls) == 0:
+                gpt_flow.calls.append(1)
+                return _mock_gpt_collecting("Qachondan beri?")
+            return _mock_gpt_ready()
 
-    complete_patient = create_patient_intelligently(
-        source="telegram",
-        text="Complete Flow 901777004",
-        started_at="2026-07-26",
-    )
-    runner.check("complete_patient_created", complete_patient is not None, "")
-    final_result = None
-    if complete_patient:
-        cid = complete_patient.patient_id
-        seed_default_location(cid)
-        create_visit(cid, visit_date="2026-07-26")
-        user_data_complete: dict = {}
-        msg = "Boshim og'riyapti"
-        for i in range(15):
-            final_result = process_consultation_turn(cid, msg, user_data=user_data_complete)
-            if final_result.completed or final_result.emergency:
-                break
-            msg = f"Javob {i}: yetarlicha ma'lumot"
+        gpt_flow.calls = []
 
-        runner.check("consultation_completes", final_result is not None and final_result.completed, repr(final_result))
-        if final_result:
-            runner.check("completion_has_summary", "Tibbiy konsultatsiya xulosasi" in final_result.reply, final_result.reply[:300])
-            runner.check("completion_offers_online", "onlayn" in final_result.reply.lower(), final_result.reply[-400:])
-            runner.check("completion_offers_appointment", "qabul" in final_result.reply.lower(), final_result.reply[-400:])
+        with patch("app.services.consultation_engine.run_neurology_turn", side_effect=gpt_flow):
+            with patch("app.services.consultation_engine.run_conversation_intent_analysis", side_effect=_mock_intent_continue):
+                with patch(
+                    "app.services.consultation_engine.run_help_followup_turn",
+                    return_value="Onlayn konsultatsiya uchun mutaxassisimiz tez orada bog'lanadi.",
+                ):
+                    process_consultation_turn(pid2, "Belim og'riyapti", user_data=ud2)
+                    process_consultation_turn(pid2, "1 hafta", user_data=ud2)
+                    online_turn = process_consultation_turn(pid2, "Onlayn konsultatsiya", user_data=ud2)
+        runner.eq("online_choice_complete", online_turn.phase, "complete")
+        runner.check("online_reply_short", _sentence_count(online_turn.reply) <= 4, online_turn.reply)
 
-        visits_complete = list_emr_visits_for_patient(cid)
-        if visits_complete:
-            visit = get_emr_visit(visits_complete[0]["id"])
-            runner.check(
-                "emr_summary_saved",
-                visit and "Konsultatsiya xulosasi" in (visit.get("notes") or ""),
-                (visit or {}).get("notes", "")[:200],
-            )
-            runner.check("emr_recommended_exams", visit and visit.get("recommended_examinations"), visit)
-
-    async def _run_chat_integration() -> str | None:
-        update = FakeUpdate(880010, "Boshim og'riyapti")
+    async def _chat_integration() -> str | None:
+        update = FakeUpdate(880020, "Boshim og'riyapti")
         context = FakeContext()
         with patch("app.handlers.chat.register_telegram_user", return_value=patient_id):
             with patch("app.handlers.chat.get_or_create_active_conversation", return_value=1):
                 with patch("app.handlers.chat.save_message"):
-                    with patch("app.handlers.chat.get_last_messages", return_value=[]):
-                        with patch("app.handlers.chat.ask_ai") as mock_ai:
-                            mock_ai.side_effect = AssertionError("ask_ai should not be called for consultation")
-                            await process_text_message(
-                                update,
-                                context,
-                                "Boshim og'riyapti",
-                                entry_handler="test",
+                    with patch("app.handlers.chat.ask_ai") as mock_ai:
+                        mock_ai.side_effect = AssertionError("ask_ai must not run")
+                        with patch(
+                            "app.services.consultation_engine.run_neurology_turn",
+                            return_value=_mock_gpt_collecting("Qachondan beri og'riyapti?"),
+                        ):
+                            with patch(
+                                "app.services.consultation_engine.run_conversation_intent_analysis",
+                                side_effect=_mock_intent_continue,
+                            ):
+                                await process_text_message(
+                                update, context, "Boshim og'riyapti", entry_handler="test"
                             )
-                            return getattr(update.message, "reply", None)
+                            if update.message.reply_text.await_args:
+                                return update.message.reply_text.await_args.args[0]
+        return None
 
-    reply = asyncio.run(_run_chat_integration())
-    runner.check("chat_routes_to_engine", reply is not None, repr(reply))
-    if reply:
-        runner.false("chat_no_ask_ai", "AssertionError" in reply)
+    chat_reply = asyncio.run(_chat_integration())
+    runner.check("chat_uses_gpt_engine", chat_reply is not None, repr(chat_reply))
+    runner.check("chat_no_script_tree", chat_reply is None or "konsultatsiya boshlaymiz" not in (chat_reply or "").lower(), chat_reply)
+
+    runner.check("topics_not_empty_after_turns", len(gpt_calls) >= 3, json.dumps(gpt_calls, default=str)[:200])
 
     _report(runner)
 

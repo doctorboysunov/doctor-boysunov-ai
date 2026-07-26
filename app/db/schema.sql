@@ -11,8 +11,13 @@ CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),
     status TEXT NOT NULL DEFAULT 'active',
+    channel TEXT NOT NULL DEFAULT 'telegram',
+    external_thread_id TEXT,
+    summary TEXT,
     last_response_id TEXT,
-    created_at TEXT NOT NULL
+    closed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -25,6 +30,38 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
     ON messages(conversation_id, id);
+
+CREATE TABLE IF NOT EXISTS patient_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    memory_key TEXT NOT NULL,
+    memory_value TEXT NOT NULL,
+    source_message_id INTEGER REFERENCES messages(id),
+    confidence REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, memory_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_patient_memories_user_id
+    ON patient_memories(user_id, memory_key);
+
+CREATE TABLE IF NOT EXISTS user_channel_identities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    channel TEXT NOT NULL CHECK (
+        channel IN ('telegram', 'instagram', 'whatsapp', 'facebook', 'web', 'mobile')
+    ),
+    external_id TEXT NOT NULL,
+    display_name TEXT,
+    metadata_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(channel, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_channel_identities_user_id
+    ON user_channel_identities(user_id, channel);
 
 CREATE TABLE IF NOT EXISTS patient_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -266,7 +303,14 @@ CREATE TABLE IF NOT EXISTS consultation_sessions (
     patient_id INTEGER NOT NULL REFERENCES users(id),
     visit_id INTEGER NOT NULL REFERENCES emr_visits(id),
     complaint_category TEXT NOT NULL,
-    phase TEXT NOT NULL CHECK (phase IN ('collecting', 'complete', 'emergency')),
+    phase TEXT NOT NULL CHECK (phase IN (
+        'collecting',
+        'awaiting_help_choice',
+        'awaiting_session_choice',
+        'awaiting_complaint_clarification',
+        'complete',
+        'emergency'
+    )),
     asked_question_ids TEXT NOT NULL DEFAULT '[]',
     answers_json TEXT NOT NULL DEFAULT '{}',
     current_question_id TEXT,

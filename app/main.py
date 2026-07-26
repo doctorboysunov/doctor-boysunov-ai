@@ -10,7 +10,8 @@ from telegram.ext import (
 )
 
 from app.config import BOT_TOKEN, DATABASE_PATH, OPENAI_MODEL, DASHBOARD_MORNING_HOUR
-from app.db.connection import get_connection, init_db
+from app.container import bootstrap
+from app.db.connection import get_connection
 from app.handlers.admin_appointments import (
     admin_appointments,
     admin_cancel_appt,
@@ -77,7 +78,7 @@ async def _log_handler_error(update: object, context) -> None:
 
 def main():
     logger = setup_logging()
-    init_db()
+    bootstrap()
     admins = bootstrap_admin_registry()
 
     with get_connection() as conn:
@@ -91,6 +92,7 @@ def main():
     logger.info("admin_telegram_ids=%s", list(admins))
     logger.info("doctor_admin_mode=%s", "enabled" if admins else "DISABLED")
     logger.info("entrypoint=app.main with SQLite conversation memory")
+    logger.info("dependency_container=ready")
     git_commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "local")
     logger.info("git_commit_sha=%s", git_commit)
     logger.info("routing_fix_version=%s", ROUTING_FIX_VERSION)

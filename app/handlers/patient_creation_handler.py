@@ -7,6 +7,8 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.domain.admin_conversation_state import enter_normal_ai_mode
+from app.domain.conversation_mode import is_doctor_admin_mode
 from app.services.patient_creation_engine import (
     PatientCreationResult,
     create_patient_intelligently,
@@ -21,6 +23,22 @@ NORMAL_AI_HINT = (
     "Normal AI assistant mode active.\n"
     "Savollaringizni yozing: tibbiy maslahat, klinika, navbat, narx, joylashuv."
 )
+
+
+def _complete_admin_patient_creation(
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    admin_telegram_id: int,
+    patient_id: int | None = None,
+    patient_name: str | None = None,
+) -> None:
+    if is_doctor_admin_mode(admin_telegram_id):
+        enter_normal_ai_mode(
+            context,
+            admin_telegram_id=admin_telegram_id,
+            patient_id=patient_id,
+            patient_name=patient_name,
+        )
 
 
 async def execute_patient_creation_from_text(
@@ -59,6 +77,12 @@ async def execute_patient_creation_from_text(
             + "\n\n"
             + NORMAL_AI_HINT
         )
+        _complete_admin_patient_creation(
+            context,
+            admin_telegram_id=telegram_id,
+            patient_id=result.patient_id,
+            patient_name=result.full_name,
+        )
         logger.info(
             "patient_creation_completed source=%s patient_id=%s by_admin=%s",
             source,
@@ -81,6 +105,12 @@ async def execute_patient_creation_from_text(
         return True
 
     await message.reply_text(format_admin_creation_confirmation(result) + "\n\n" + NORMAL_AI_HINT)
+    _complete_admin_patient_creation(
+        context,
+        admin_telegram_id=telegram_id,
+        patient_id=result.patient_id,
+        patient_name=result.full_name,
+    )
     logger.info(
         "patient_creation_completed source=%s patient_id=%s created=%s by_admin=%s",
         source,

@@ -19,7 +19,7 @@ for db_path in (TEST_DB, LEGACY_DB):
 os.environ["DATABASE_PATH"] = str(TEST_DB)
 os.environ["ADMIN_TELEGRAM_IDS"] = ""
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "location-test-token")
-os.environ.setdefault("OPENAI_API_KEY", "location-test-key")
+os.environ["OPENAI_API_KEY"] = "location-test-key"
 
 sys.path.insert(0, str(ROOT))
 
@@ -117,7 +117,8 @@ class FakeContext:
 async def send_text(text: str, context: FakeContext) -> tuple[str, dict]:
     update = FakeUpdate()
     update.message = FakeMessage(text=text)
-    await chat(update, context)
+    with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+        await chat(update, context)
     call = update.message.reply_text.await_args
     reply = call.args[0]
     kwargs = call.kwargs

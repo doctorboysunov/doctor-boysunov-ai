@@ -3,6 +3,7 @@
 import asyncio
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -13,21 +14,30 @@ if TEST_DB.exists():
     TEST_DB.unlink()
 
 os.environ["DATABASE_PATH"] = str(TEST_DB.relative_to(ROOT)).replace("\\", "/")
-os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
-os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ["TELEGRAM_BOT_TOKEN"] = "test-token"
+os.environ["OPENAI_API_KEY"] = "test-key"
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from importlib import reload  # noqa: E402
+
+import app.settings as app_settings  # noqa: E402
+
+app_settings.get_settings.cache_clear()
+reload(app_settings)
+
 from app.config import BOT_TOKEN, DATABASE_PATH, OPENAI_MODEL
 from app.db.connection import get_connection, init_db
+from app.domain.conversation_flow import FlowDecision
 from app.handlers.chat import chat
+from app.handlers.location import LocationHandleResult
 from app.handlers.start import start
 from app.repositories.conversation_repository import (
     get_last_messages,
     get_or_create_active_conversation,
 )
-from app.services.openai_service import _build_input, ask_ai
+from app.services.openai_service import _build_input
 
 
 class FakeTelegramUser:
@@ -48,6 +58,39 @@ class FakeUpdate:
         self.message = FakeMessage(text)
 
 
+CONSULTATION_FLOW = FlowDecision(
+    flow="patient_consultation",
+    reason="verify_step_2_6",
+    is_admin=False,
+    admin_reason="patient",
+    patient_intake_detected=False,
+    patient_creation_triggered=False,
+    clinical_form_detected=False,
+)
+
+
+@contextmanager
+def patient_flow_patches():
+    with (
+        patch("app.handlers.start.has_location_stored", return_value=True),
+        patch("app.handlers.chat.has_location_stored", return_value=True),
+        patch(
+            "app.handlers.chat.resolve_incoming_message_flow",
+            return_value=CONSULTATION_FLOW,
+        ),
+        patch(
+            "app.handlers.chat.handle_location_registration_text",
+            new=AsyncMock(return_value=LocationHandleResult.NOT_IN_REGISTRATION),
+        ),
+        patch(
+            "app.handlers.chat.handle_appointment_flow",
+            new=AsyncMock(return_value=False),
+        ),
+        patch("app.handlers.chat.should_use_consultation_engine", return_value=False),
+    ):
+        yield
+
+
 def assert_startup() -> None:
     init_db()
 
@@ -64,13 +107,20 @@ def assert_startup() -> None:
             ).fetchall()
         }
 
-    assert {"users", "conversations", "messages"}.issubset(tables)
+    assert {
+        "users",
+        "conversations",
+        "messages",
+        "patient_memories",
+        "user_channel_identities",
+    }.issubset(tables)
     print("  [ok] startup: schema, config, database file")
 
 
 async def run_start() -> None:
     update = FakeUpdate("/start")
-    await start(update, context=None)
+    with patient_flow_patches():
+        await start(update, context=None)
 
     with get_connection() as conn:
         user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -85,18 +135,19 @@ async def run_start() -> None:
 async def run_chat_turn(text: str, answer: str, history_checker=None) -> None:
     update = FakeUpdate(text)
 
-    with patch("app.handlers.chat.ask_ai") as mock_ask_ai:
-        mock_ask_ai.return_value = answer
+    with patient_flow_patches():
+        with patch("app.handlers.chat.ask_ai") as mock_ask_ai:
+            mock_ask_ai.return_value = answer
+            await chat(update, context=None)
 
-        await chat(update, context=None)
+            assert mock_ask_ai.called, "ask_ai should be called for patient medical turn"
+            history = mock_ask_ai.call_args.args[0]
+            assert isinstance(history, list)
+            assert all(msg["role"] in {"user", "assistant"} for msg in history)
+            assert "system" not in {msg["role"] for msg in history}
 
-        history = mock_ask_ai.call_args.args[0]
-        assert isinstance(history, list)
-        assert all(msg["role"] in {"user", "assistant"} for msg in history)
-        assert "system" not in {msg["role"] for msg in history}
-
-        if history_checker is not None:
-            history_checker(history)
+            if history_checker is not None:
+                history_checker(history)
 
     reply = update.message.reply_text.await_args.args[0]
     assert reply == answer
@@ -115,7 +166,6 @@ async def run_multi_turn_and_restart() -> int:
 
     conversation_id = get_or_create_active_conversation(user_id)
 
-    # Simulate process restart: read persisted history from SQLite only.
     persisted = get_last_messages(conversation_id, limit=10)
     assert len(persisted) == 4
     assert persisted[0]["content"] == "Salom"
@@ -126,7 +176,6 @@ async def run_multi_turn_and_restart() -> int:
 
 
 async def run_last_ten_window(conversation_id: int) -> None:
-    # Two turns already created 4 messages; add 10 more turns (20 messages).
     for index in range(3, 13):
         await run_chat_turn(f"msg-{index}", f"reply-{index}")
 
@@ -156,8 +205,6 @@ async def run_last_ten_window(conversation_id: int) -> None:
 
 
 def assert_openai_backward_compat() -> None:
-    assert _build_input("Yagona xabar") == "Yagona xabar"
-
     multi = [
         {"role": "user", "content": "a"},
         {"role": "assistant", "content": "b"},
@@ -188,12 +235,6 @@ async def main() -> None:
 
     print()
     print("Step 2.6 OK: Phase 2 SQLite conversation memory verified end-to-end")
-    print()
-    print("Manual Telegram smoke test:")
-    print("  1. python -m app.main")
-    print("  2. Send /start — greeting appears")
-    print("  3. Send two related messages — second reply should use context")
-    print("  4. Restart bot — third message should still remember prior turns")
 
 
 if __name__ == "__main__":

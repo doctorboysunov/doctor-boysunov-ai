@@ -27,6 +27,7 @@ from app.repositories.patient_profile_repository import get_patient_profile  # n
 from app.services.patient_context import build_profile_instructions  # noqa: E402
 from app.services.profile_extraction import extract_profile_updates  # noqa: E402
 from app.settings import get_settings  # noqa: E402
+from scripts.test_support import patient_flow_patches  # noqa: E402
 
 openai_requests: list[dict] = []
 
@@ -68,11 +69,12 @@ def assert_extraction(message: str, expected: dict) -> None:
 async def run_turn(text: str) -> str:
     out = StringIO()
     with redirect_stdout(out):
-        with patch(
-            "app.services.openai_service.client.responses.create",
-            side_effect=fake_responses_create,
-        ):
-            await chat(FakeUpdate(text), None)
+        with patient_flow_patches():
+            with patch(
+                "app.services.openai_service.client.responses.create",
+                side_effect=fake_responses_create,
+            ):
+                await chat(FakeUpdate(text), None)
     return out.getvalue()
 
 

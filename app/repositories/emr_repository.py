@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.db.connection import get_connection
-from app.domain.emr import EMR_VISIT_FIELDS
+from app.domain.emr import EMR_V1_FIELDS, EMR_VISIT_FIELDS
 
 logger = logging.getLogger("doctor_boysunov.emr")
 
@@ -15,6 +15,7 @@ _EMR_VISIT_COLUMNS = (
     "id",
     "patient_id",
     *EMR_VISIT_FIELDS,
+    *EMR_V1_FIELDS,
     "created_at",
     "updated_at",
 )
@@ -25,7 +26,8 @@ def _utc_now() -> str:
 
 
 def _row_to_visit(row) -> dict[str, Any]:
-    visit = {column: row[column] for column in _EMR_VISIT_COLUMNS}
+    keys = row.keys()
+    visit = {column: row[column] if column in keys else None for column in _EMR_VISIT_COLUMNS}
     visit["id"] = int(visit["id"])
     visit["patient_id"] = int(visit["patient_id"])
     return visit
@@ -127,6 +129,13 @@ def update_emr_visit(
     procedures_performed: str | None = None,
     follow_up_schedule: str | None = None,
     notes: str | None = None,
+    ai_assessment_json: str | None = None,
+    ai_review_status: str | None = None,
+    doctor_reviewed_at: str | None = None,
+    doctor_reviewed_by: str | None = None,
+    urgency: str | None = None,
+    primary_specialty: str | None = None,
+    secondary_specialties_json: str | None = None,
 ) -> dict[str, Any] | None:
     existing = get_emr_visit(visit_id)
     if existing is None:
@@ -146,6 +155,13 @@ def update_emr_visit(
         ("procedures_performed", procedures_performed),
         ("follow_up_schedule", follow_up_schedule),
         ("notes", notes),
+        ("ai_assessment_json", ai_assessment_json),
+        ("ai_review_status", ai_review_status),
+        ("doctor_reviewed_at", doctor_reviewed_at),
+        ("doctor_reviewed_by", doctor_reviewed_by),
+        ("urgency", urgency),
+        ("primary_specialty", primary_specialty),
+        ("secondary_specialties_json", secondary_specialties_json),
     ):
         if value is not None:
             updates[field] = value
@@ -193,3 +209,26 @@ def count_emr_visits_for_patient(patient_id: int) -> int:
             (patient_id,),
         ).fetchone()
     return int(row["total"])
+
+
+def list_visits_pending_ai_review(*, limit: int = 50) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT v.*, p.full_name, p.phone_number
+            FROM emr_visits v
+            LEFT JOIN patient_profiles p ON p.user_id = v.patient_id
+            WHERE v.ai_review_status = 'draft'
+            ORDER BY v.updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        visit = _row_to_visit(row)
+        visit["patient_name"] = row["full_name"]
+        visit["patient_phone"] = row["phone_number"]
+        results.append(visit)
+    return results
+

@@ -16,6 +16,8 @@ from app.domain.admin_conversation_state import (
 )
 from app.domain.conversation_mode import is_doctor_admin_mode
 from app.domain.patient_profile_fields import PROFILE_FIELDS
+from app.application.chat.load_conversation_context import load_conversation_context
+from app.container import get_container
 from app.handlers.appointments import BOOKING_STATE_KEY, handle_appointment_flow
 from app.handlers.clinic_location_handler import handle_clinic_location_request
 from app.handlers.common import get_telegram_user_id, register_telegram_user
@@ -161,6 +163,9 @@ async def route_incoming_text_message(
     profile_updates = extract_profile_updates(text)
     if profile_updates:
         update_patient_profile(user_id, **profile_updates)
+        memory_repo = get_container().memories
+        for key, value in profile_updates.items():
+            memory_repo.upsert_memory(user_id, key, value)
         logger.info(
             "patient_profile_updated user_id=%s fields=%s",
             user_id,
@@ -233,7 +238,12 @@ async def _handle_ai_chat(
     if patient_profile is None:
         patient_profile = get_or_create_patient_profile(user_id)
 
-    history = get_last_messages(conversation_id, limit=HISTORY_LIMIT)
+    conversation_context = load_conversation_context(
+        user_id,
+        conversation_id=conversation_id,
+        history_limit=HISTORY_LIMIT,
+    )
+    history = conversation_context.history
 
     print("=== BEFORE ask_ai() ===")
     print(f"database={DATABASE_PATH}")
@@ -246,6 +256,12 @@ async def _handle_ai_chat(
     )
     print(f"conversation_mode={conversation_mode}")
 
-    answer = ask_ai(history, patient_profile=patient_profile, conversation_mode=conversation_mode)
+    answer = ask_ai(
+        history,
+        patient_profile=patient_profile,
+        conversation_mode=conversation_mode,
+        context_instructions=conversation_context.context_instructions,
+        conversation_id=conversation_id,
+    )
     save_message(conversation_id, "assistant", answer)
     await message.reply_text(answer)

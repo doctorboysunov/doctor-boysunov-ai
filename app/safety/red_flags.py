@@ -22,6 +22,9 @@ RED_FLAG_RULES: tuple[RedFlagRule, ...] = (
             r"falaj",
             r"yuz qismi qaltir",
             r"nutq buzil",
+            r"gap.*buzil",
+            r"qo['']?l.*ishlamay",
+            r"kuchsiz",
             r"sudden weakness",
         ),
         "possible stroke",
@@ -76,8 +79,59 @@ RED_FLAG_RULES: tuple[RedFlagRule, ...] = (
             r"severe bleeding",
             r"to['']?xta qon ket",
             r"qon ketish to['']?xtab",
+            r"qorong['']?u axlat",
+            r"qorong['']?u rangli",
+            r"melena",
         ),
-        "severe bleeding",
+        "GI bleeding",
+    ),
+    RedFlagRule(
+        "hemoptysis",
+        (
+            r"qizil qon",
+            r"qon tufla",
+            r"hemoptysis",
+            r"yo['']?tal.*qon|qon.*yo['']?tal",
+        ),
+        "hemoptysis",
+    ),
+    RedFlagRule(
+        "weight_loss",
+        (
+            r"vazn.*yo['']?qot",
+            r"weight loss",
+            r"kg yo['']?qot",
+        ),
+        "unexplained weight loss",
+    ),
+    RedFlagRule(
+        "cellulitis",
+        (
+            r"qizarish kengay",
+            r"tarqal.*qizarish",
+            r"spreading redness",
+        ),
+        "spreading cellulitis",
+    ),
+    RedFlagRule(
+        "drug_rash",
+        (
+            r"tozma.*isitma|isitma.*tozma",
+            r"butun tana.*tozma",
+            r"ko['']?z.*qizarib",
+            r"amoxicillin|antibiotik",
+        ),
+        "drug rash",
+    ),
+    RedFlagRule(
+        "infant_fever",
+        (
+            r"haftalik.*isitma|isitma.*haftalik",
+            r"oylik.*isitma",
+            r"chaqaloq.*isitma",
+            r"8 haftalik",
+        ),
+        "infant fever",
     ),
 )
 

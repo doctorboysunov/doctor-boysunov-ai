@@ -19,10 +19,24 @@ EMR_VISIT_FIELDS = (
     "notes",
 )
 
+EMR_V1_FIELDS = (
+    "ai_assessment_json",
+    "ai_review_status",
+    "doctor_reviewed_at",
+    "doctor_reviewed_by",
+    "urgency",
+    "primary_specialty",
+    "secondary_specialties_json",
+)
+
+AiReviewStatus = Literal["none", "draft", "reviewed"]
+
 TimelineEventType = Literal[
     "visit",
     "follow_up",
     "appointment",
     "medical_record",
     "treatment",
+    "ai_consultation",
 ]
+

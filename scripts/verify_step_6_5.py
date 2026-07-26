@@ -19,7 +19,7 @@ os.environ["DATABASE_PATH"] = str(TEST_DB)
 os.environ["PATIENT_INTAKE_API_KEY"] = "test-intake-key"
 os.environ["ADMIN_TELEGRAM_IDS"] = "940001"
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "intake-65-test-token")
-os.environ.setdefault("OPENAI_API_KEY", "intake-65-test-key")
+os.environ["OPENAI_API_KEY"] = "intake-65-test-key"
 
 sys.path.insert(0, str(ROOT))
 
@@ -232,8 +232,12 @@ def main() -> None:
 
     # 9. Telegram handler integration
     async def run_text_handler() -> str:
+        from app.domain.admin_conversation_state import enter_patient_registration_mode  # noqa: E402
+
+        ctx = FakeContext()
+        enter_patient_registration_mode(ctx, admin_telegram_id=940001)
         update = FakeUpdate(FakeMessage(text="Nodira Yusupova 901010101"))
-        handled = await handle_admin_chat_text(update, FakeContext())
+        handled = await handle_admin_chat_text(update, ctx)
         if not handled:
             return ""
         return update.message.reply_text.await_args.args[0]
@@ -251,8 +255,10 @@ def main() -> None:
 
     async def run_voice_handler() -> str:
         from unittest.mock import MagicMock
+        from app.domain.admin_conversation_state import enter_patient_registration_mode  # noqa: E402
 
         update = FakeUpdate(FakeMessage())
+        update.message.text = ""
         voice = MagicMock()
         voice.file_id = "voice-test-id"
         update.message.voice = voice
@@ -262,7 +268,9 @@ def main() -> None:
         file_obj.file_path = "voice/test.oga"
         file_obj.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake"))
 
-        context = FakeContext()
+        ctx = FakeContext()
+        enter_patient_registration_mode(ctx, admin_telegram_id=940001)
+        context = ctx
         context.bot = MagicMock()
         context.bot.get_file = AsyncMock(return_value=file_obj)
 

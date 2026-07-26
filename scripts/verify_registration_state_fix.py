@@ -35,10 +35,16 @@ from app.handlers.chat import chat  # noqa: E402
 from app.repositories.conversation_repository import upsert_user  # noqa: E402
 from app.repositories.patient_profile_repository import get_patient_profile  # noqa: E402
 from app.services.location_profile import has_location_stored  # noqa: E402
+from app.services.consultation_ai import DoctorEmrUpdate, NeurologyTurnOutput  # noqa: E402
 from app.services.registration_state import (  # noqa: E402
     PENDING_REGISTRATION_STEP_KEY,
     REGISTRATION_STATE_KEY,
     registration_snapshot,
+)
+
+_MOCK_GPT = NeurologyTurnOutput(
+    patient_reply="Tushundim. Qachondan beri og'riyapti?",
+    doctor_emr=DoctorEmrUpdate(chief_complaint="Bosh og'rig'i"),
 )
 
 
@@ -59,6 +65,7 @@ class FakeUpdate:
     def __init__(self, user: FakeUser, text: str):
         self.effective_user = user
         self.message = FakeMessage(text)
+        self.message.from_user = user
 
 
 class FakeContext:
@@ -83,6 +90,8 @@ async def send(user: FakeUser, text: str, context: FakeContext) -> str:
 
 
 async def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     init_db()
     ask_ai = MagicMock(return_value="Medical javob")
 
@@ -120,7 +129,9 @@ async def main() -> None:
     )
 
     ask_ai.return_value = "Bosh og'riq uchun dam oling va suv iching."
-    with patch("app.handlers.chat.ask_ai", ask_ai):
+    with patch("app.handlers.chat.ask_ai", ask_ai), patch(
+        "app.services.consultation_engine.run_neurology_turn", return_value=_MOCK_GPT
+    ):
         unstuck_reply = await send(stuck_user, "Boshim og'riyapti", stuck_context)
 
     print("\n=== AFTER (auto-finished + Consultation Engine) ===")
@@ -131,7 +142,7 @@ async def main() -> None:
     }
     print(json.dumps(after_stuck, ensure_ascii=False, indent=2))
     assert after_stuck["context"]["registration_state"] is None
-    assert "konsultatsiya" in unstuck_reply.lower() or "?" in unstuck_reply
+    assert "?" in unstuck_reply or "og'ri" in unstuck_reply.lower()
 
     fresh_user = FakeUser(880002, "fresh_patient", "Fresh Patient")
     fresh_user_id = upsert_user(
@@ -171,7 +182,9 @@ async def main() -> None:
     ask_ai.return_value = "Bosh og'riq uchun dam oling."
 
     print("\n=== RUN: medical complaint during registration (pause + AI) ===")
-    with patch("app.handlers.chat.ask_ai", ask_ai):
+    with patch("app.handlers.chat.ask_ai", ask_ai), patch(
+        "app.services.consultation_engine.run_neurology_turn", return_value=_MOCK_GPT
+    ):
         await send(pause_user, "O'zbekiston", pause_context)
         await send(pause_user, "O'zbekiston", pause_context)
         await send(pause_user, "Surxandaryo", pause_context)
@@ -181,7 +194,7 @@ async def main() -> None:
     print(json.dumps({"context": paused, "medical_reply": medical_reply}, ensure_ascii=False, indent=2))
     assert paused["registration_state"] == "paused"
     assert paused["pending_registration_step"] == "district"
-    assert "konsultatsiya" in medical_reply.lower() or "?" in medical_reply
+    assert "?" in medical_reply or "og'ri" in medical_reply.lower()
 
     print("\n=== RUN: resume registration after medical pause ===")
     with patch("app.handlers.chat.ask_ai", ask_ai):

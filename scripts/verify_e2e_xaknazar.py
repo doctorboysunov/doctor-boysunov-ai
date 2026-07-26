@@ -17,8 +17,8 @@ if TEST_DB.exists():
     TEST_DB.unlink()
 
 os.environ["DATABASE_PATH"] = str(TEST_DB)
-os.environ.setdefault("TELEGRAM_BOT_TOKEN", "verify-token")
-os.environ.setdefault("OPENAI_API_KEY", "verify-key")
+os.environ["TELEGRAM_BOT_TOKEN"] = "verify-token"
+os.environ["OPENAI_API_KEY"] = "verify-key"
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -105,11 +105,15 @@ async def run_turn(label: str, text: str) -> None:
     log.info("=== TURN: %s ===", label)
     log.info("incoming telegram text: %r", text)
 
-    with patch(
-        "app.services.openai_service.client.responses.create",
-        side_effect=fake_responses_create,
-    ):
-        await chat(FakeUpdate(text), context=None)
+    from scripts.test_support import patient_flow_patches  # noqa: E402
+
+    with patient_flow_patches():
+        with patch(
+            "app.services.openai_service.client.responses.create",
+            side_effect=fake_responses_create,
+        ):
+            with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+                await chat(FakeUpdate(text), context=None)
 
 
 def assert_message_in_sqlite(rows: list[tuple], content: str, step: str) -> None:

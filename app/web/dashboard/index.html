@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Medical OS — Doctor Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>Medical OS</h1>
+      <p class="subtitle">Doctor Dashboard V1</p>
+    </div>
+    <div class="header-actions">
+      <input type="password" id="apiKey" placeholder="API Key" />
+      <button id="connectBtn">Connect</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section>
+        <h2>AI Review Queue</h2>
+        <p class="hint">Consultations awaiting doctor sign-off</p>
+        <ul id="reviewQueue" class="queue-list"></ul>
+      </section>
+      <section>
+        <h2>Today</h2>
+        <div id="todayStats" class="stats"></div>
+      </section>
+    </aside>
+
+    <section class="content">
+      <div id="emptyState" class="empty-state">
+        <h2>Select a visit to review</h2>
+        <p>AI-generated clinical assessments appear here for doctor review and sign-off.</p>
+      </div>
+
+      <div id="reviewPanel" class="review-panel hidden">
+        <div class="panel-header">
+          <div>
+            <h2 id="patientName">—</h2>
+            <p id="visitMeta" class="meta"></p>
+          </div>
+          <span id="urgencyBadge" class="badge">routine</span>
+        </div>
+
+        <div class="grid">
+          <article class="card">
+            <h3>Chief Complaint</h3>
+            <p id="chiefComplaint">—</p>
+          </article>
+          <article class="card">
+            <h3>Specialties</h3>
+            <p id="specialties">—</p>
+          </article>
+          <article class="card">
+            <h3>AI Differential</h3>
+            <ul id="differentials"></ul>
+          </article>
+          <article class="card">
+            <h3>Red Flags</h3>
+            <ul id="redFlags"></ul>
+          </article>
+          <article class="card wide">
+            <h3>AI Clinical Reasoning</h3>
+            <pre id="aiReasoning" class="reasoning"></pre>
+          </article>
+          <article class="card wide">
+            <h3>Doctor Review</h3>
+            <form id="reviewForm">
+              <label>Preliminary Diagnosis<input name="preliminary_diagnosis" /></label>
+              <label>Final Diagnosis<input name="final_diagnosis" /></label>
+              <label>Treatment Plan<textarea name="treatment_plan" rows="3"></textarea></label>
+              <label>Examination Findings<textarea name="examination_findings" rows="3"></textarea></label>
+              <label>Notes<textarea name="notes" rows="2"></textarea></label>
+              <label>Doctor ID<input name="doctor_id" value="doctor" required /></label>
+              <div class="form-actions">
+                <button type="submit" class="primary">Approve & Sign</button>
+              </div>
+            </form>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span id="platformInfo">Medical OS V1</span>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

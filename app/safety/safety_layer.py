@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.safety.instructions import build_safety_instructions
 from app.safety.red_flags import build_emergency_response, detect_red_flags
 from app.safety.response_filter import sanitize_ai_response
 
@@ -26,12 +25,13 @@ def combine_instructions(
     profile_instructions: str | None,
     receptionist_instructions: str | None = None,
 ) -> str:
-    parts = [build_safety_instructions()]
-    if receptionist_instructions:
-        parts.append(receptionist_instructions)
-    if profile_instructions:
-        parts.append(profile_instructions)
-    return "\n\n".join(parts)
+    from app.infrastructure.ai.prompt_builder import build_medical_system_prompt
+
+    return build_medical_system_prompt(
+        profile_instructions=profile_instructions,
+        conversation_mode="patient" if receptionist_instructions else "doctor_admin",
+        include_receptionist_workflow=receptionist_instructions is not None,
+    )
 
 
 def enforce_safety(*, user_message: str, ai_response: str) -> tuple[str, dict[str, Any]]:

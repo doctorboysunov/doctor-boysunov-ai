@@ -18,7 +18,7 @@ if TEST_DB.exists():
 os.environ["DATABASE_PATH"] = str(TEST_DB)
 os.environ["ADMIN_TELEGRAM_IDS"] = "888001"
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "registration-routes-test-token")
-os.environ.setdefault("OPENAI_API_KEY", "registration-routes-test-key")
+os.environ["OPENAI_API_KEY"] = "registration-routes-test-key"
 
 sys.path.insert(0, str(ROOT))
 
@@ -186,83 +186,79 @@ async def _chat_reply(text: str, context: FakeContext | None = None, *, require_
 def test_live_routing(runner: TestRunner) -> None:
     ask_ai_mock = MagicMock(return_value="Tibbiy maslahat: dam oling va shifokorga murojaat qiling.")
 
-    with patch("app.services.message_router.ask_ai", ask_ai_mock):
-        with patch("app.services.message_router.register_telegram_user", return_value=ADMIN_ID):
-            with patch("app.services.message_router.get_or_create_active_conversation", return_value=1):
-                with patch("app.services.message_router.get_last_messages", return_value=[]):
-                    with patch("app.services.message_router.get_or_create_patient_profile", return_value={}):
-                        with patch("app.services.message_router.save_message"):
-                            with patch(
-                                "app.services.message_router.handle_clinic_location_request",
-                                AsyncMock(return_value=None),
-                            ) as clinic_handler:
-                                with patch(
-                                    "app.services.message_router.handle_pricing_request",
-                                    AsyncMock(return_value=None),
-                                ) as pricing_handler:
-                                    async def normal_messages() -> None:
-                                        context = FakeContext()
-                                        medical = await _chat_reply("Boshim og'riyapti nima qilay?", context)
-                                        runner.check(
-                                            "medical_not_registration_prompt",
-                                            REGISTRATION_PROMPT not in medical,
-                                            medical,
-                                        )
-                                        runner.true("medical_uses_ai", ask_ai_mock.called)
+    with patch("app.handlers.chat.ask_ai", ask_ai_mock):
+        with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+            with patch(
+                "app.handlers.chat.handle_clinic_location_request",
+                AsyncMock(return_value=None),
+            ) as clinic_handler:
+                with patch(
+                    "app.handlers.chat.handle_pricing_request",
+                    AsyncMock(return_value=None),
+                ) as pricing_handler:
 
-                                        ask_ai_mock.reset_mock()
-                                        belt = await _chat_reply("Belim og'riyapti", context)
-                                        runner.check(
-                                            "belt_not_registration_prompt",
-                                            REGISTRATION_PROMPT not in belt,
-                                            belt,
-                                        )
-                                        runner.true("belt_uses_ai", ask_ai_mock.called)
+                    async def normal_messages() -> None:
+                        context = FakeContext()
+                        medical = await _chat_reply("Boshim og'riyapti nima qilay?", context)
+                        runner.check(
+                            "medical_not_registration_prompt",
+                            REGISTRATION_PROMPT not in medical,
+                            medical,
+                        )
+                        runner.true("medical_uses_ai", ask_ai_mock.called)
 
-                                        ask_ai_mock.reset_mock()
-                                        free_name_phone = await _chat_reply("Ali Valiyev +998701041101", context)
-                                        runner.check(
-                                            "free_name_phone_not_creation",
-                                            "Patient created" not in free_name_phone,
-                                            free_name_phone,
-                                        )
-                                        runner.check(
-                                            "free_name_phone_not_reg_prompt",
-                                            REGISTRATION_PROMPT not in free_name_phone,
-                                            free_name_phone,
-                                        )
-                                        runner.true("free_name_phone_uses_ai", ask_ai_mock.called)
+                        ask_ai_mock.reset_mock()
+                        belt = await _chat_reply("Belim og'riyapti", context)
+                        runner.check(
+                            "belt_not_registration_prompt",
+                            REGISTRATION_PROMPT not in belt,
+                            belt,
+                        )
+                        runner.true("belt_uses_ai", ask_ai_mock.called)
 
-                                        ask_ai_mock.reset_mock()
-                                        clinic_handler.reset_mock()
-                                        await _chat_reply("Qayerda ishlaysiz?", context, require_reply=False)
-                                        runner.true("clinic_handler_called", clinic_handler.await_count == 1)
+                        ask_ai_mock.reset_mock()
+                        free_name_phone = await _chat_reply("Ali Valiyev +998701041101", context)
+                        runner.check(
+                            "free_name_phone_not_creation",
+                            "Patient created" not in free_name_phone,
+                            free_name_phone,
+                        )
+                        runner.check(
+                            "free_name_phone_not_reg_prompt",
+                            REGISTRATION_PROMPT not in free_name_phone,
+                            free_name_phone,
+                        )
+                        runner.true("free_name_phone_uses_ai", ask_ai_mock.called)
 
-                                        pricing_handler.reset_mock()
-                                        await _chat_reply("Narx qancha?", context, require_reply=False)
-                                        runner.true("pricing_handler_called", pricing_handler.await_count == 1)
+                        ask_ai_mock.reset_mock()
+                        clinic_handler.reset_mock()
+                        await _chat_reply("Qayerda ishlaysiz?", context, require_reply=False)
+                        runner.true("clinic_handler_called", clinic_handler.await_count == 1)
 
-                                        clinic_handler.reset_mock()
-                                        await _chat_reply("Lokatsiya yuboring", context, require_reply=False)
-                                        runner.true("location_handler_called", clinic_handler.await_count == 1)
+                        pricing_handler.reset_mock()
+                        await _chat_reply("Narx qancha?", context, require_reply=False)
+                        runner.true("pricing_handler_called", pricing_handler.await_count == 1)
 
-                                    asyncio.run(normal_messages())
+                        clinic_handler.reset_mock()
+                        await _chat_reply("Lokatsiya yuboring", context, require_reply=False)
+                        runner.true("location_handler_called", clinic_handler.await_count == 1)
 
-    with patch("app.services.message_router.register_telegram_user", return_value=ADMIN_ID):
-        async def explicit_flow() -> tuple[str, str, str]:
-            context = FakeContext()
-            command_update = FakeUpdate(ADMIN_ID, "/add_patient")
-            await admin_add_patient(command_update, context)
-            prompt_reply = command_update.message.reply_text.await_args.args[0]
-            runner.true("add_patient_starts_registration", registration_mode_active(ADMIN_ID))
-            runner.check("add_patient_prompt", REGISTRATION_PROMPT in prompt_reply, prompt_reply)
+                    asyncio.run(normal_messages())
 
-            create_reply = await _chat_reply("Ali Valiyev +998701041101", context)
-            session = get_admin_session(ADMIN_ID)
-            state = get_admin_state(context, admin_telegram_id=ADMIN_ID)
-            return create_reply, session["mode"] if session else "", state.mode if state else ""
+    async def explicit_flow() -> tuple[str, str, str]:
+        context = FakeContext()
+        command_update = FakeUpdate(ADMIN_ID, "/add_patient")
+        await admin_add_patient(command_update, context)
+        prompt_reply = command_update.message.reply_text.await_args.args[0]
+        runner.true("add_patient_starts_registration", registration_mode_active(ADMIN_ID))
+        runner.check("add_patient_prompt", REGISTRATION_PROMPT in prompt_reply, prompt_reply)
 
-        create_reply, session_mode, state_mode = asyncio.run(explicit_flow())
+        create_reply = await _chat_reply("Ali Valiyev +998701041101", context)
+        session = get_admin_session(ADMIN_ID)
+        state = get_admin_state(context, admin_telegram_id=ADMIN_ID)
+        return create_reply, session["mode"] if session else "", state.mode if state else ""
+
+    create_reply, session_mode, state_mode = asyncio.run(explicit_flow())
 
     runner.check("explicit_create_confirms", "Patient created" in create_reply or "already exists" in create_reply.lower(), create_reply)
     runner.eq("explicit_create_session_mode", session_mode, "normal_ai")
@@ -270,13 +266,9 @@ def test_live_routing(runner: TestRunner) -> None:
     runner.false("explicit_create_registration_cleared", registration_mode_active(ADMIN_ID))
 
     ask_ai_after = MagicMock(return_value="Keyingi savolingizni yozing.")
-    with patch("app.services.message_router.ask_ai", ask_ai_after):
-        with patch("app.services.message_router.register_telegram_user", return_value=ADMIN_ID):
-            with patch("app.services.message_router.get_or_create_active_conversation", return_value=1):
-                with patch("app.services.message_router.get_last_messages", return_value=[]):
-                    with patch("app.services.message_router.get_or_create_patient_profile", return_value={}):
-                        with patch("app.services.message_router.save_message"):
-                            follow_up = asyncio.run(_chat_reply("Boshim og'riyapti"))
+    with patch("app.handlers.chat.ask_ai", ask_ai_after):
+        with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+            follow_up = asyncio.run(_chat_reply("Boshim og'riyapti"))
     runner.true("after_create_medical_uses_ai", ask_ai_after.called)
     runner.check("after_create_not_reg_prompt", REGISTRATION_PROMPT not in follow_up, follow_up)
 
@@ -287,15 +279,9 @@ def test_live_routing(runner: TestRunner) -> None:
     )
     runner.true("stuck_registration_before", registration_mode_active(ADMIN_ID))
     ask_ai_stuck = MagicMock(return_value="Bosh og'rig'i uchun dam oling.")
-    with patch("app.services.message_router.ask_ai", ask_ai_stuck):
-        with patch("app.services.message_router.register_telegram_user", return_value=ADMIN_ID):
-            with patch("app.services.message_router.get_or_create_active_conversation", return_value=1):
-                with patch("app.services.message_router.get_last_messages", return_value=[]):
-                    with patch("app.services.message_router.get_or_create_patient_profile", return_value={}):
-                        with patch("app.services.message_router.save_message"):
-                            stuck_reply = asyncio.run(
-                                _chat_reply("Boshim og'riyapti nima qilay?")
-                            )
+    with patch("app.handlers.chat.ask_ai", ask_ai_stuck):
+        with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+            stuck_reply = asyncio.run(_chat_reply("Boshim og'riyapti nima qilay?"))
     runner.false("stuck_registration_cleared", registration_mode_active(ADMIN_ID))
     runner.true("stuck_medical_uses_ai", ask_ai_stuck.called)
     runner.check("stuck_not_reg_prompt", REGISTRATION_PROMPT not in stuck_reply, stuck_reply)

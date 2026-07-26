@@ -45,6 +45,14 @@ _CATEGORY_PATTERNS: dict[ComplaintCategory, tuple[str, ...]] = {
         r"low back",
         r"qorin\s*og['']?ri\s*emas.*bel",
         r"bel\s*og['']?ri",
+        r"chap\s+oyoq.*og['']?ri",
+        r"o['']?ng\s+oyoq.*og['']?ri",
+        r"oyoq\s*og['']?ri",
+        r"leg\s*pain",
+        r"left\s+leg",
+        r"right\s+leg",
+        r"sciatica",
+        r"iqtiroiyog['']?riq",
     ),
     "neck_pain": (
         r"bo['']?yin\s*og['']?ri",
@@ -160,7 +168,7 @@ def classify_complaint(text: str | None) -> ComplaintCategory:
             scores[category] = score
 
     if not scores:
-        return "other_neurological"
+        return "neuropathy"  # neutral clinical category — syndrome from reasoner, not this label
 
     best_score = max(scores.values())
     candidates = [cat for cat, score in scores.items() if score == best_score]

@@ -31,6 +31,7 @@ reload(app_settings)
 reload(app_config)
 
 from app.db.connection import init_db  # noqa: E402
+from app.domain.admin_conversation_state import enter_patient_registration_mode  # noqa: E402
 from app.handlers.patient_intake import handle_patient_voice  # noqa: E402
 from app.services.patient_intake.extraction import extract_patient_from_text  # noqa: E402
 
@@ -63,6 +64,7 @@ class FakeVoice:
 
 class FakeMessage:
     def __init__(self) -> None:
+        self.text = ""
         self.voice = FakeVoice()
         self.audio = None
         self.reply_text = AsyncMock()
@@ -85,6 +87,7 @@ class FakeBot:
 
 class FakeContext:
     bot = FakeBot()
+    user_data: dict = {}
 
 
 def main() -> None:
@@ -107,8 +110,10 @@ def main() -> None:
             "app.handlers.patient_intake.transcribe_audio",
             return_value=transcript,
         ):
+            ctx = FakeContext()
+            enter_patient_registration_mode(ctx, admin_telegram_id=7898074891)
             update = FakeUpdate()
-            await handle_patient_voice(update, FakeContext())
+            await handle_patient_voice(update, ctx)
             return update.message.reply_text.await_args.args[0]
 
     reply = asyncio.run(run_handler())

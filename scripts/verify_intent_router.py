@@ -17,7 +17,7 @@ if TEST_DB.exists():
 os.environ["DATABASE_PATH"] = str(TEST_DB)
 os.environ["ADMIN_TELEGRAM_IDS"] = "888001"
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "intent-router-test-token")
-os.environ.setdefault("OPENAI_API_KEY", "intent-router-test-key")
+os.environ["OPENAI_API_KEY"] = "intent-router-test-key"
 
 sys.path.insert(0, str(ROOT))
 
@@ -145,33 +145,23 @@ def main() -> None:
     runner.eq("active_patient_module", route_active.module, "doctor_visit")
 
     ask_ai_mock = MagicMock(return_value="Iltimos, shikoyatingizni batafsil yozing.")
-    with patch("app.services.message_router.ask_ai", ask_ai_mock):
-        with patch("app.services.message_router.register_telegram_user", return_value=888001):
-            with patch(
-                "app.services.message_router.get_or_create_active_conversation",
-                return_value=1,
-            ):
-                with patch("app.services.message_router.get_last_messages", return_value=[]):
-                    with patch(
-                        "app.services.message_router.get_or_create_patient_profile",
-                        return_value={},
-                    ):
-                        with patch("app.services.message_router.save_message"):
-                            async def admin_medical_chat() -> str:
-                                context = FakeContext()
-                                update = FakeUpdate(888001, "My head hurts")
-                                await chat(update, context)
-                                return update.message.reply_text.await_args.args[0]
+    with patch("app.handlers.chat.ask_ai", ask_ai_mock):
+        with patch("app.handlers.chat.should_use_consultation_engine", return_value=False):
+            async def admin_medical_chat() -> str:
+                context = FakeContext()
+                update = FakeUpdate(888001, "My head hurts")
+                await chat(update, context)
+                return update.message.reply_text.await_args.args[0]
 
-                            reply = asyncio.run(admin_medical_chat())
+            reply = asyncio.run(admin_medical_chat())
 
     runner.check("admin_medical_uses_ai", ask_ai_mock.called, "")
     runner.check("admin_medical_not_creation_hint", "Bemor qo'shish uchun" not in reply, reply)
     runner.check("admin_medical_ai_reply", "shikoyatingizni" in reply.lower(), reply)
 
     with patch(
-        "app.handlers.chat.route_incoming_text_message",
-        AsyncMock(),
+        "app.handlers.chat.execute_patient_creation_from_text",
+        AsyncMock(return_value=True),
     ) as routed:
         async def admin_create_routes() -> None:
             context = FakeContext()

@@ -32,12 +32,13 @@ class AdminConversationState:
 
 
 def _sync_context(context: ContextTypes.DEFAULT_TYPE, session: dict[str, Any] | None) -> None:
-    if context.user_data is None:
+    user_data = getattr(context, "user_data", None)
+    if user_data is None:
         return
     if session is None:
-        context.user_data.pop(ADMIN_STATE_KEY, None)
+        user_data.pop(ADMIN_STATE_KEY, None)
         return
-    context.user_data[ADMIN_STATE_KEY] = {
+    user_data[ADMIN_STATE_KEY] = {
         "mode": session["mode"],
         "patient_id": session.get("active_patient_id"),
         "patient_name": session.get("active_patient_name"),

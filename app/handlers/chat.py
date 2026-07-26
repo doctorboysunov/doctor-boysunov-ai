@@ -5,14 +5,23 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.config import DATABASE_PATH
+from app.domain.admin_conversation_state import (
+    cancel_patient_registration,
+    get_admin_state,
+    registration_mode_active,
+)
+from app.application.chat.load_conversation_context import load_conversation_context
+from app.container import get_container
 from app.domain.conversation_flow import mark_consultation_flow, resolve_incoming_message_flow
-from app.domain.patient_profile_fields import PROFILE_FIELDS
-from app.handlers.appointments import handle_appointment_flow
+from app.handlers.appointments import BOOKING_STATE_KEY, handle_appointment_flow
+from app.handlers.clinic_location_handler import handle_clinic_location_request
+from app.handlers.doctor_visit_handler import handle_doctor_visit_message
+from app.handlers.pricing_handler import handle_pricing_request
 from app.handlers.common import get_telegram_user_id, register_telegram_user
 from app.handlers.location import LocationHandleResult, handle_location_registration_text
 from app.handlers.patient_creation_handler import execute_patient_creation_from_text
+from app.repositories.communication_repository import get_pending_follow_up_reply_delivery
 from app.repositories.conversation_repository import (
-    get_last_messages,
     get_or_create_active_conversation,
     save_message,
 )
@@ -24,7 +33,9 @@ from app.services.consultation_engine import (
     process_consultation_turn,
     should_use_consultation_engine,
 )
+from app.services.intent_router import classify_message_intent, log_intent_classification
 from app.services.location_profile import has_location_stored
+from app.services.message_dispatcher import resolve_target_module
 from app.services.openai_service import ask_ai
 from app.services.profile_extraction import extract_profile_updates
 from app.services.routing_trace import ROUTING_FIX_VERSION, RoutingTrace
@@ -119,6 +130,9 @@ async def process_text_message(
     profile_updates = extract_profile_updates(user_message)
     if profile_updates:
         update_patient_profile(user_id, **profile_updates)
+        memory_repo = get_container().memories
+        for key, value in profile_updates.items():
+            memory_repo.upsert_memory(user_id, key, value)
         logger.info(
             "patient_profile_updated user_id=%s fields=%s",
             user_id,
@@ -211,6 +225,65 @@ async def process_text_message(
             trace.dump()
             return
 
+        admin_state = get_admin_state(context, admin_telegram_id=telegram_id)
+        admin_active_patient_id = admin_state.patient_id if admin_state else None
+        in_patient_registration_mode = registration_mode_active(telegram_id)
+        user_data_obj = getattr(context, "user_data", None) if context is not None else None
+        in_appointment_booking = bool(user_data_obj and user_data_obj.get(BOOKING_STATE_KEY))
+
+        classification = classify_message_intent(
+            user_message,
+            is_admin=True,
+            admin_active_patient_id=admin_active_patient_id,
+            pending_follow_up=False,
+            in_patient_registration_mode=in_patient_registration_mode,
+        )
+        route = resolve_target_module(
+            classification,
+            is_admin=True,
+            admin_active_patient_id=admin_active_patient_id,
+            in_appointment_booking=in_appointment_booking,
+            in_patient_registration_mode=in_patient_registration_mode,
+        )
+        log_intent_classification(
+            telegram_id=telegram_id,
+            text=user_message,
+            classification=classification,
+            module=route.module,
+        )
+
+        if in_patient_registration_mode and route.module != "patient_creation":
+            cancel_patient_registration(context, admin_telegram_id=telegram_id)
+            logger.info(
+                "patient_registration_auto_cancelled telegram_user_id=%s routed_module=%s",
+                telegram_id,
+                route.module,
+            )
+
+        if route.module == "doctor_visit":
+            trace.select("doctor_visit_handler", route.reason)
+            trace.dump()
+            await handle_doctor_visit_message(
+                update,
+                context,
+                text=user_message,
+                admin_telegram_id=telegram_id,
+            )
+            return
+
+        if route.module == "clinic_locator":
+            trace.select("clinic_location_handler", route.reason)
+            trace.dump()
+            patient_id = admin_active_patient_id or user_id
+            await handle_clinic_location_request(update, context, patient_id=patient_id)
+            return
+
+        if route.module == "pricing_info":
+            trace.select("pricing_handler", route.reason)
+            trace.dump()
+            await handle_pricing_request(update)
+            return
+
     consultation = mark_consultation_flow(decision)
     conversation_mode = "doctor_admin" if decision.is_admin else "patient"
     trace.medical_ai(
@@ -225,9 +298,14 @@ async def process_text_message(
         ROUTING_FIX_VERSION,
     )
 
-    history = get_last_messages(conversation_id, limit=HISTORY_LIMIT)
+    conversation_context = load_conversation_context(
+        user_id,
+        conversation_id=conversation_id,
+        history_limit=HISTORY_LIMIT,
+    )
+    history = conversation_context.history
 
-    user_data = context.user_data if context is not None else None
+    user_data = getattr(context, "user_data", None) if context is not None else None
     use_consultation = (
         not decision.is_admin
         and should_use_consultation_engine(user_id, user_message, user_data)
@@ -258,6 +336,8 @@ async def process_text_message(
         history,
         patient_profile=patient_profile,
         conversation_mode=conversation_mode,
+        context_instructions=conversation_context.context_instructions,
+        conversation_id=conversation_id,
     )
 
     save_message(conversation_id, "assistant", answer)

@@ -1,0 +1,222 @@
+"""Multi-specialty evaluation scenarios for Universal Medical Brain."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class MedicalScenario:
+    id: str
+    title: str
+    opening_message: str
+    expected_primary: str
+    expected_secondary: list[str] = field(default_factory=list)
+    requires_emergency: bool = False
+    requires_multi_specialty: bool = False
+    expert_opens_with: str = ""
+    common_ai_mistake: str = ""
+    improvement: str = ""
+
+
+SCENARIOS: tuple[MedicalScenario, ...] = (
+    MedicalScenario(
+        id="01_chest_pain",
+        title="Chest pain ACS screen",
+        opening_message="Ko'kragim og'riyapti, chap qo'limga tarqaladi",
+        expected_primary="cardiology",
+        expected_secondary=["emergency_medicine"],
+        requires_emergency=True,
+        expert_opens_with="Character, radiation, timing — ACS until proven otherwise.",
+        common_ai_mistake="Generic pain scale without cardiac features",
+        improvement="OPQRST + radiation + emergency pathway",
+    ),
+    MedicalScenario(
+        id="02_diabetes_neuropathy",
+        title="Diabetes + neuropathy",
+        opening_message="Qandli diabetim bor, oyoqlarim uvyapti",
+        expected_primary="endocrinology",
+        expected_secondary=["neurology"],
+        requires_multi_specialty=True,
+        expert_opens_with="Diabetes control AND neuropathy pattern — coordinate both.",
+        common_ai_mistake="Only asks about diabetes OR only neuropathy",
+        improvement="Multi-specialty coordination in one question",
+    ),
+    MedicalScenario(
+        id="03_rash_fever",
+        title="Rash with fever",
+        opening_message="Terimda tozma chiqdi va isitmam bor",
+        expected_primary="dermatology",
+        expected_secondary=["infectious_diseases"],
+        requires_multi_specialty=True,
+        expert_opens_with="Distribution, progression, systemic symptoms.",
+        common_ai_mistake="Dermatology-only without infection screen",
+        improvement="Fever + rash → infectious differential",
+    ),
+    MedicalScenario(
+        id="04_headache_neuro",
+        title="Headache neurology",
+        opening_message="Boshim og'riyapti, chakkamda pulsatsiya",
+        expected_primary="neurology",
+        expert_opens_with="Pattern and red flags before topography.",
+        common_ai_mistake="Location before story",
+        improvement="Open narrative + SNOOP screen",
+    ),
+    MedicalScenario(
+        id="05_abdominal_pain",
+        title="Abdominal pain GI",
+        opening_message="Qorin og'riyapti, ko'ngil aynish bor",
+        expected_primary="gastroenterology",
+        expert_opens_with="Location, character, vomiting, alarm features.",
+        common_ai_mistake="Neurology headache workup",
+        improvement="GI-specific triage",
+    ),
+    MedicalScenario(
+        id="06_dyspnea",
+        title="Shortness of breath",
+        opening_message="Nafas olishim qiyinlashyapti",
+        expected_primary="pulmonology",
+        expected_secondary=["emergency_medicine", "cardiology"],
+        expert_opens_with="Acute vs chronic, severity, chest pain association.",
+        common_ai_mistake="Generic anxiety attribution",
+        improvement="Respiratory/cardiac emergency screen",
+    ),
+    MedicalScenario(
+        id="07_urinary",
+        title="Urinary symptoms",
+        opening_message="Siydik qilishda og'riq bor",
+        expected_primary="urology",
+        expert_opens_with="Dysuria, frequency, fever, hematuria.",
+        common_ai_mistake="Wrong specialty routing",
+        improvement="Urology-specific first question",
+    ),
+    MedicalScenario(
+        id="08_pediatric_fever",
+        title="Pediatric fever",
+        opening_message="Bolam isitmasi bor, 2 yoshda",
+        expected_primary="pediatrics",
+        expected_secondary=["infectious_diseases"],
+        expert_opens_with="Age, hydration, activity, rash.",
+        common_ai_mistake="Adult fever workup",
+        improvement="Age-appropriate assessment",
+    ),
+    MedicalScenario(
+        id="09_mental_health",
+        title="Depression safety",
+        opening_message="Depressiyadan aziyat chekaman, umidsizman",
+        expected_primary="psychiatry",
+        expert_opens_with="Safety screen, functional impact, organic rule-out.",
+        common_ai_mistake="Long checklist tone",
+        improvement="Warm safety-focused opening",
+    ),
+    MedicalScenario(
+        id="10_eye_acute",
+        title="Acute vision change",
+        opening_message="Ko'zim birdan ko'rmay qoldi",
+        expected_primary="ophthalmology",
+        expected_secondary=["emergency_medicine"],
+        requires_emergency=True,
+        expert_opens_with="Painless vs painful, unilateral — same-day urgency.",
+        common_ai_mistake="Delayed non-urgent approach",
+        improvement="Acute vision loss urgency",
+    ),
+    MedicalScenario(
+        id="11_joint_swelling",
+        title="Hot swollen joint",
+        opening_message="Tizza bo'g'imim shishgan va issiq",
+        expected_primary="rheumatology",
+        expected_secondary=["orthopedics"],
+        expert_opens_with="Monoarthritis — septic vs crystal vs inflammatory.",
+        common_ai_mistake="Chronic arthritis workup",
+        improvement="Acute hot joint urgency",
+    ),
+    MedicalScenario(
+        id="12_gyn_pelvic",
+        title="Pelvic pain gynecology",
+        opening_message="Qorin pastida og'riq, hayz kechikyapti",
+        expected_primary="gynecology",
+        expert_opens_with="LMP, pregnancy test, pain severity.",
+        common_ai_mistake="GI-only differential",
+        improvement="Pregnancy/ectopic screen",
+    ),
+    MedicalScenario(
+        id="13_ent_hearing",
+        title="Hearing loss ENT",
+        opening_message="Quloq eshitmayapti, birdan boshlandi",
+        expected_primary="ent",
+        expert_opens_with="Sudden vs gradual, laterality, vertigo overlap.",
+        common_ai_mistake="Neurology-only vertigo workup",
+        improvement="ENT-specific urgency for sudden SNHL",
+    ),
+    MedicalScenario(
+        id="14_cancer_weight_loss",
+        title="Weight loss oncology",
+        opening_message="Vazn yo'qotyapman, sababsiz 5 kg",
+        expected_primary="oncology",
+        expected_secondary=["internal_medicine"],
+        expert_opens_with="Timeline, B symptoms, localizing symptoms.",
+        common_ai_mistake="Reassurance without workup",
+        improvement="Constitutional symptom screen",
+    ),
+    MedicalScenario(
+        id="15_surgical_abdomen",
+        title="Acute surgical abdomen",
+        opening_message="Qorin juda og'riyapti, qattiq",
+        expected_primary="general_surgery",
+        expected_secondary=["emergency_medicine", "gastroenterology"],
+        requires_emergency=True,
+        expert_opens_with="Peritoneal signs, migration, fever.",
+        common_ai_mistake="Outpatient GI approach",
+        improvement="Surgical emergency triage",
+    ),
+    MedicalScenario(
+        id="16_thyroid",
+        title="Thyroid/endocrine",
+        opening_message="Qalqonsimon bezim og'riyapti, titroq bor",
+        expected_primary="endocrinology",
+        expert_opens_with="Thyroid symptoms, heart rate, weight change.",
+        common_ai_mistake="Neurology tremor-only workup",
+        improvement="Endocrine + tremor coordination",
+    ),
+    MedicalScenario(
+        id="17_stroke_neuro",
+        title="Stroke emergency",
+        opening_message="Qo'lim kuchsiz, nutqim buzildi",
+        expected_primary="neurology",
+        expected_secondary=["emergency_medicine"],
+        requires_emergency=True,
+        expert_opens_with="Time last well — minimal questions.",
+        common_ai_mistake="Routine headache history",
+        improvement="Stroke emergency pathway",
+    ),
+    MedicalScenario(
+        id="18_general_fatigue",
+        title="Undifferentiated fatigue",
+        opening_message="Doim charchab yuraman, sababi noma'lum",
+        expected_primary="internal_medicine",
+        expert_opens_with="Timeline, weight, sleep, mood, meds.",
+        common_ai_mistake="Premature psychiatric attribution",
+        improvement="Broad organic screen first",
+    ),
+    MedicalScenario(
+        id="19_chest_arm_combo",
+        title="Chest pain + arm numbness",
+        opening_message="Ko'krak og'rig'i va qo'lim uvyapti",
+        expected_primary="cardiology",
+        expected_secondary=["emergency_medicine", "neurology"],
+        requires_multi_specialty=True,
+        requires_emergency=True,
+        expert_opens_with="ACS + neurovascular — emergency coordination.",
+        common_ai_mistake="Single specialty focus",
+        improvement="Emergency + cardiology + neuro coordination",
+    ),
+    MedicalScenario(
+        id="20_infection_fever",
+        title="Fever infectious disease",
+        opening_message="3 kundan beri isitmam bor, titroq bilan",
+        expected_primary="infectious_diseases",
+        expert_opens_with="Pattern, travel, immunocompromised, localizing.",
+        common_ai_mistake="Antibiotic advice without assessment",
+        improvement="Fever workup priorities",
+    ),
+)

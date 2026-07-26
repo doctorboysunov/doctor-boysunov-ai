@@ -1,0 +1,548 @@
+"""Registry of neurological clinical pathways — add hundreds via register_pathway()."""
+
+from __future__ import annotations
+
+from app.clinical_brain.clinical_pathways.types import ClinicalPathway, PathwayNode
+
+_PATHWAYS: dict[str, ClinicalPathway] = {}
+
+
+def _node(
+    id: str,
+    topic_slug: str,
+    phase: str,
+    question_focus: str,
+    *,
+    question_uz: str = "",
+    required: bool = True,
+    depends_on: tuple[str, ...] = (),
+    rationale: str = "",
+    clinical_info_label: str = "",
+) -> PathwayNode:
+    return PathwayNode(
+        id=id,
+        topic_slug=topic_slug,
+        phase=phase,  # type: ignore[arg-type]
+        question_focus=question_focus,
+        question_uz=question_uz or question_focus,
+        required=required,
+        depends_on=depends_on,
+        rationale=rationale,
+        clinical_info_label=clinical_info_label or topic_slug,
+    )
+
+
+def _register(pathway: ClinicalPathway) -> None:
+    _PATHWAYS[pathway.id] = pathway
+
+
+def register_pathway(pathway: ClinicalPathway) -> None:
+    """Public API — register or override a pathway at runtime."""
+    _register(pathway)
+
+
+def get_pathway(pathway_id: str) -> ClinicalPathway | None:
+    return _PATHWAYS.get(pathway_id)
+
+
+def all_pathways() -> list[ClinicalPathway]:
+    return list(_PATHWAYS.values())
+
+
+def default_pathway_for_category(category: str) -> str:
+    mapping = {
+        "headache": "headache",
+        "low_back_pain": "lumbar_spine",
+        "neck_pain": "cervical_spine",
+        "vertigo": "vestibular",
+        "stroke": "stroke_acute",
+        "neuropathy": "peripheral_neuropathy",
+        "facial_nerve_palsy": "facial_nerve",
+        "tremor": "parkinsonian",
+        "memory_problems": "memory_cognitive",
+        "sleep_disorders": "sleep_neurology",
+        "anxiety": "functional_neurology",
+        "depression": "functional_neurology",
+        "neuropathy": "unclassified_neurology",
+        "other_neurological": "unclassified_neurology",
+        "unclassified_neurology": "unclassified_neurology",
+    }
+    return mapping.get(category, "general_neurology")
+
+
+def _bootstrap_pathways() -> None:
+    _register(ClinicalPathway(
+        id="lumbar_radiculopathy",
+        syndrome="Lumbar radiculopathy",
+        syndrome_label_uz="Lumbosakral radikulopatiya",
+        base_category="low_back_pain",
+        description_uz="Bel/orqa og'riq bilan oyoqqa tarqaluvchi og'riq (iqtiroiyog'riq)",
+        recognition_keywords=(
+            "chap oyoq", "o'ng oyoq", "oyoq og'ri", "iqtiroiyog'riq", "sciatica",
+            "beldan oyoq", "bel og'ri", "oyoqqa tarqal",
+        ),
+        recognition_patterns=(
+            r"chap\s+oyoq.*og['']?ri",
+            r"o['']?ng\s+oyoq.*og['']?ri",
+            r"oyoq.*og['']?ri.*bel",
+            r"bel.*oyoq.*og['']?ri",
+            r"iqtiroiyog['']?riq",
+            r"sciatica",
+            r"left\s+leg.*pain",
+            r"right\s+leg.*pain",
+            r"leg\s+pain.*back",
+            r"radiat.*leg",
+        ),
+        priority=85,
+        triage_must_not_miss="Cauda equina: ikkala oyoq kuchsizligi, 'saddle' sezgi yo'qolishi, siydik-najas nazorati buzilishi.",
+        min_required_topics=5,
+        nodes=(
+            _node("lr_triage", "lumbar_rad_cauda_screen", "triage",
+                  "Oyoq kuchsizligi, sezgi o'zgarishi yoki siydik-najas nazorati buzilganmi?"),
+            _node("lr_onset", "lumbar_rad_onset", "narrative",
+                  "Og'riq qachondan boshlandi — birdanmi yoki asta asta kuchayaptimi?",
+                  depends_on=("lumbar_rad_cauda_screen",)),
+            _node("lr_radiation", "lumbar_rad_radiation", "discriminator",
+                  "Og'riq aniq qayerga tarqaladi — orqa oyoq, boldir, tovon?",
+                  depends_on=("lumbar_rad_onset",)),
+            _node("lr_deficit", "lumbar_rad_neuro_deficit", "discriminator",
+                  "Oyoqda kuchsizlik, uyuqish yoki refleks o'zgarishi bormi?",
+                  depends_on=("lumbar_rad_radiation",)),
+            _node("lr_aggravating", "lumbar_rad_aggravating", "context",
+                  "Nima qilib kuchayadi/yengillaydi — yo'rganda, o'tirganda, yoqishda?",
+                  depends_on=("lumbar_rad_neuro_deficit",)),
+            _node("lr_red_flags", "lumbar_rad_red_flags", "triage",
+                  "Isitma, og'ir vazn yo'qotish, travma yoki saraton tarixi bormi?",
+                  depends_on=("lumbar_rad_aggravating",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="lumbar_spine",
+        syndrome="Lumbar spine syndrome",
+        syndrome_label_uz="Lumbal umurtqa pog'onasi sindromi",
+        base_category="low_back_pain",
+        description_uz="Asosan bel/orqa og'riq, aniq radiatsiya yo'q",
+        recognition_keywords=("bel og'ri", "belim og'ri", "orqa og'ri", "kamar og'ri", "lumbar"),
+        recognition_patterns=(r"bel\s*og['']?ri", r"belim\s*og['']?ri", r"kamar\s*og['']?ri"),
+        priority=70,
+        triage_must_not_miss="Cauda equina, kompression fraktura, infeksiya (isitma, IV dori).",
+        min_required_topics=4,
+        nodes=(
+            _node("ls_triage", "lumbar_spine_cauda_screen", "triage",
+                  "Oyoq kuchsizligi, sezgi yo'qolishi yoki siydik-najas muammosi bormi?"),
+            _node("ls_onset", "lumbar_spine_onset", "narrative",
+                  "Bel og'rig'i qachondan boshlandi va qanday xarakterda?",
+                  depends_on=("lumbar_spine_cauda_screen",)),
+            _node("ls_location", "lumbar_spine_location", "discriminator",
+                  "Og'riq markaziy belmi yoki bir tomonga ko'proqmi?",
+                  depends_on=("lumbar_spine_onset",)),
+            _node("ls_function", "lumbar_spine_function", "context",
+                  "Kundalik faoliyatingizga qanday ta'sir qilmoqda — yurish, o'tirish?",
+                  depends_on=("lumbar_spine_location",)),
+            _node("ls_radiation", "lumbar_spine_radiation", "discriminator",
+                  "Og'riq oyoqqa yoki chanoqqa tarqaladimi?",
+                  depends_on=("lumbar_spine_function",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="cervical_spine",
+        syndrome="Cervical spine syndrome",
+        syndrome_label_uz="Servikal umurtqa pog'onasi sindromi",
+        base_category="neck_pain",
+        description_uz="Bo'yin og'rig'i / servikal belgilar",
+        recognition_keywords=("bo'yin og'ri", "boyin og'ri", "servikal", "bo'ynim"),
+        recognition_patterns=(r"bo['']?yin\s*og['']?ri", r"servikal"),
+        priority=75,
+        triage_must_not_miss="Myelopatiya, disseksiya, meningit (isitma, bosh og'rig'i, nutq).",
+        min_required_topics=4,
+        nodes=(
+            _node("cs_triage", "cervical_myelo_screen", "triage",
+                  "Qo'l/oyoq kuchsizligi, yurishda o'zgarish yoki sezgi muammosi bormi?"),
+            _node("cs_onset", "cervical_onset", "narrative",
+                  "Bo'yin og'rig'i qachondan va qanday boshlangan?",
+                  depends_on=("cervical_myelo_screen",)),
+            _node("cs_radiation", "cervical_radiation", "discriminator",
+                  "Og'riq qo'lga yoki boshga tarqaladimi?",
+                  depends_on=("cervical_onset",)),
+            _node("cs_red_flags", "cervical_red_flags", "triage",
+                  "Travma, isitma, nutq yoki ko'rish buzilishi bormi?",
+                  depends_on=("cervical_radiation",)),
+            _node("cs_aggravating", "cervical_aggravating", "context",
+                  "Bosh harakati og'riqni kuchaytiradimi?",
+                  depends_on=("cervical_red_flags",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="cervical_radiculopathy",
+        syndrome="Cervical radiculopathy",
+        syndrome_label_uz="Servikal radikulopatiya",
+        base_category="neck_pain",
+        description_uz="Bo'yin + qo'l/kaft uyuqligi yoki og'riq",
+        recognition_keywords=(
+            "qo'l uyuq", "kaft uyuq", "qo'lim uyuq", "bo'yin", "qo'lda og'ri",
+            "qo'l og'ri", "barmoq uyuq", "boyin og'ri",
+        ),
+        recognition_patterns=(
+            r"bo['']?yin.*qo['']?l.*uyuq",
+            r"qo['']?l.*bo['']?yin",
+            r"boyin.*uyuq",
+            r"barmoq.*uyuq.*bo['']?yin",
+        ),
+        priority=88,
+        triage_must_not_miss="Myelopatiya, o'tkir travma, infarkt emasmi tekshirish.",
+        min_required_topics=5,
+        nodes=(
+            _node("cr_triage", "cervical_rad_myelo_screen", "triage",
+                  "Ikki qo'lda kuchsizlik, yurish muammosi yoki sezgi tez pasayishi bormi?"),
+            _node("cr_distribution", "cervical_rad_distribution", "discriminator",
+                  "Uyuqish/og'riq qaysi qo'l va qaysi barmoqlarda?",
+                  depends_on=("cervical_rad_myelo_screen",)),
+            _node("cr_neck", "cervical_rad_neck_link", "narrative",
+                  "Bo'yin og'rig'i ham bormi va qachondan?",
+                  depends_on=("cervical_rad_distribution",)),
+            _node("cr_deficit", "cervical_rad_motor", "discriminator",
+                  "Qo'lda kuchsizlik yoki buyum tushib qoladimi?",
+                  depends_on=("cervical_rad_neck_link",)),
+            _node("cr_aggravating", "cervical_rad_aggravating", "context",
+                  "Bo'yni burish og'riqni kuchaytiradimi?",
+                  depends_on=("cervical_rad_motor",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="peripheral_neuropathy",
+        syndrome="Peripheral neuropathy",
+        syndrome_label_uz="Periferik neuropatiya",
+        base_category="neuropathy",
+        description_uz="Qo'l/oyoq uyuqligi — bo'yin belgisi yo'q",
+        recognition_keywords=("uyuq", "qiynish", "sezgi", "qo'l uyuq", "oyoq uyuq", "kaft uyuq", "neuropat"),
+        recognition_patterns=(r"uyuq", r"qiynish", r"sezgi\s*pasay", r"neuropat", r"kaft.*uyuq", r"qo['']?l.*uyuq"),
+        priority=72,
+        triage_must_not_miss="Tez progressiya, faqat bir tomonda, orqa og'riq bilan — shoshilinch sabab.",
+        min_required_topics=4,
+        nodes=(
+            _node("pn_triage", "neuropathy_progression", "triage",
+                  "Belgilar tez kuchayaptimi yoki bir tomonda bormi?"),
+            _node("pn_distribution", "neuropathy_distribution", "discriminator",
+                  "Uyuqish qayerda — qo'llar, oyoqlar, barmoqlar?",
+                  depends_on=("neuropathy_progression",)),
+            _node("pn_onset", "neuropathy_onset", "narrative",
+                  "Qachondan boshlangan va asta asta kengayaptimi?",
+                  depends_on=("neuropathy_distribution",)),
+            _node("pn_associated", "neuropathy_associated", "context",
+                  "Qandli diabet, giyohvand modda yoki dorilar qabul qilasizmi?",
+                  depends_on=("neuropathy_onset",)),
+            _node("pn_motor", "neuropathy_motor", "discriminator",
+                  "Kuchsizlik ham bormi yoki faqat sezgi buzilishi?",
+                  depends_on=("neuropathy_associated",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="headache",
+        syndrome="Headache syndrome",
+        syndrome_label_uz="Bosh og'rig'i sindromi",
+        base_category="headache",
+        description_uz="Bosh og'rig'i / migren / klaster",
+        recognition_keywords=("bosh og'ri", "boshim og'ri", "migren", "chakka"),
+        recognition_patterns=(r"bosh\s*og['']?ri", r"migren"),
+        priority=80,
+        triage_must_not_miss="SNOOP: thunderclap, nevrologik defitsit, isitma, 50+ yangi, progressive.",
+        min_required_topics=5,
+        nodes=(
+            _node("ha_triage", "headache_snoop", "triage",
+                  "Birdan eng kuchli bosh og'rig'i, nutq/ko'rish/kuchsizlik yoki isitma bormi?"),
+            _node("ha_onset", "headache_onset", "narrative",
+                  "Bosh og'rig'i birdan boshlandimi yoki asta kuchayaptimi?",
+                  depends_on=("headache_snoop",)),
+            _node("ha_character", "headache_character", "discriminator",
+                  "Og'riq qayerda va qanday — pulsatsiya, siqish, bir tomonda?",
+                  depends_on=("headache_onset",)),
+            _node("ha_associated", "headache_associated", "discriminator",
+                  "Ko'ngil aynishi, yorug'lik/sezgirlik yoki ko'rish oldidan chaqmoq bormi?",
+                  depends_on=("headache_character",)),
+            _node("ha_pattern", "headache_pattern", "context",
+                  "Qancha vaqtdan beri va qancha kun davom etadi?",
+                  depends_on=("headache_associated",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="vestibular",
+        syndrome="Vestibular syndrome",
+        syndrome_label_uz="Vestibulyar sindrom",
+        base_category="vertigo",
+        description_uz="Bosh aylanishi / vertigo",
+        recognition_keywords=("bosh aylan", "vertigo", "muvozanat", "qaltirab"),
+        recognition_patterns=(r"bosh\s*aylan", r"vertigo", r"muvozanat"),
+        priority=82,
+        triage_must_not_miss="Markaziy vertigo: doimiy + bosh og'rig'i/nutq/koordinatsiya buzilishi.",
+        min_required_topics=4,
+        nodes=(
+            _node("ve_triage", "vestibular_central_screen", "triage",
+                  "Doimiy vertigomi yoki hujumlar? Nutq, eshitish yoki kuchsizlik bormi?"),
+            _node("ve_timing", "vestibular_timing", "discriminator",
+                  "Aylanish bir necha soniyami, daqiqami yoki soatlami davom etadi?",
+                  depends_on=("vestibular_central_screen",)),
+            _node("ve_position", "vestibular_position", "discriminator",
+                  "Boshni burish yoki yotishda kuchayadimi (BPPV shubhasi)?",
+                  depends_on=("vestibular_timing",)),
+            _node("ve_hearing", "vestibular_hearing", "context",
+                  "Eshitish pasayishi yoki shox tortish bormi?",
+                  depends_on=("vestibular_position",)),
+            _node("ve_associated", "vestibular_associated", "context",
+                  "Ko'ngil aynishi, qusish yoki yurak urishi ham bormi?",
+                  depends_on=("vestibular_hearing",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="facial_nerve",
+        syndrome="Facial nerve palsy",
+        syndrome_label_uz="Yuz nervi (VII juft) falaji",
+        base_category="facial_nerve_palsy",
+        description_uz="Yuz qiyshayishi / yuz kuchsizligi",
+        recognition_keywords=("yuz qiysh", "yuz falaj", "yuz qimir", "lab tush", "bell"),
+        recognition_patterns=(r"yuz\s*qiysh", r"yuz\s*falaj", r"yuz\s*qimir", r"lab\s*tush"),
+        priority=90,
+        triage_must_not_miss="Sentral vs periferik: pogon/yoq kuchsizligi, o'tkir bosh og'rig'i (dissseksiya).",
+        min_required_topics=4,
+        nodes=(
+            _node("fn_triage", "facial_nerve_central_screen", "triage",
+                  "Qo'l yoki oyoq kuchsizligi, nutq buzilishi yoki o'tkir bosh og'rig'i bormi?"),
+            _node("fn_onset", "facial_nerve_onset", "narrative",
+                  "Yuz qiyshayishi qachondan boshlandi — birdanmi?",
+                  depends_on=("facial_nerve_central_screen",)),
+            _node("fn_side", "facial_nerve_side", "discriminator",
+                  "Bir tomondami yoki ikki tomondami?",
+                  depends_on=("facial_nerve_onset",)),
+            _node("fn_complete", "facial_nerve_complete", "discriminator",
+                  "Ko'z qisilishida va lab burchagida to'liq kuchsizlik bormi?",
+                  depends_on=("facial_nerve_side",)),
+            _node("fn_ear", "facial_nerve_ear", "context",
+                  "Quloq og'rig'i, tovush sezuvchanligi yoki lokal tomoq og'rig'i bormi?",
+                  depends_on=("facial_nerve_complete",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="parkinsonian",
+        syndrome="Parkinsonian syndrome",
+        syndrome_label_uz="Parkinson sindromi / titroq",
+        base_category="tremor",
+        description_uz="Titroq / qaltirash",
+        recognition_keywords=("titroq", "tremor", "qaltirash", "qo'l titra", "harakat sekin"),
+        recognition_patterns=(r"titroq", r"tremor", r"qaltirash", r"titray"),
+        priority=78,
+        triage_must_not_miss="Tez progressiya, yiqilish, nutq buzilishi — atipik parkinsonizm.",
+        min_required_topics=4,
+        nodes=(
+            _node("pk_triage", "parkinsonian_red_flags", "triage",
+                  "Tez kuchaygan titroq, yiqilish, nutq yoki yutish muammosi bormi?"),
+            _node("pk_rest_action", "parkinsonian_rest_action", "discriminator",
+                  "Titroq dam olganda kuchayadimi yoki harakatda (reaching)?",
+                  depends_on=("parkinsonian_red_flags",)),
+            _node("pk_distribution", "parkinsonian_distribution", "discriminator",
+                  "Qaysi qo'l/oyoq yoki yuzda — bir tomondami?",
+                  depends_on=("parkinsonian_rest_action",)),
+            _node("pk_associated", "parkinsonian_associated", "context",
+                  "Harakat sekinlashishi, yuz ifodasi kamayishi yoki yurish o'zgarishi bormi?",
+                  depends_on=("parkinsonian_distribution",)),
+            _node("pk_meds", "parkinsonian_meds", "context",
+                  "Metoklopramid, antipsixotik yoki boshqa dorilar qabul qilasizmi?",
+                  depends_on=("parkinsonian_associated",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="epilepsy",
+        syndrome="Epilepsy / seizure disorder",
+        syndrome_label_uz="Epilepsiya / tutqanoq",
+        base_category="other_neurological",
+        description_uz="Tutqanoq / epileptik hujum",
+        recognition_keywords=("tutqanoq", "epilep", "hujum", "fit", "hushdan ket", "qotib qol"),
+        recognition_patterns=(r"tutqanoq", r"epilep", r"seizure", r"hushdan\s*ket", r"fit\b"),
+        priority=95,
+        triage_must_not_miss="Aktiv hujum, birinchi tutqanoq, homiladorlik, travma — shoshilinch.",
+        min_required_topics=5,
+        nodes=(
+            _node("ep_triage", "epilepsy_active_seizure", "triage",
+                  "Hozir hujum davom etayaptimi yoki hushsiz holat bormi?"),
+            _node("ep_first", "epilepsy_first_ever", "narrative",
+                  "Bu birinchi marta tutqanoqmi yoki oldin ham bo'lganmi?",
+                  depends_on=("epilepsy_active_seizure",)),
+            _node("ep_description", "epilepsy_semiology", "discriminator",
+                  "Hujum qanday — hush yo'qolishi, qotish, qo'l-oyoq harakati?",
+                  depends_on=("epilepsy_first_ever",)),
+            _node("ep_duration", "epilepsy_duration", "discriminator",
+                  "Hujum qancha vaqt davom etadi va keyin nima bo'ladi?",
+                  depends_on=("epilepsy_semiology",)),
+            _node("ep_triggers", "epilepsy_triggers", "context",
+                  "Uyqusizlik, spirt, dori yoki stress bilan bog'liqmi?",
+                  depends_on=("epilepsy_duration",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="stroke_acute",
+        syndrome="Acute stroke syndrome",
+        syndrome_label_uz="O'tkir insult sindromi",
+        base_category="stroke",
+        description_uz="O'tkir nevrologik defitsit / insult",
+        recognition_keywords=("insult", "falaj", "nutq buz", "qo'lim ishlam", "yuz qimir"),
+        recognition_patterns=(r"insult", r"falaj", r"nutq\s*buz", r"qo['']?lim\s*ishlam"),
+        priority=100,
+        triage_must_not_miss="Vaqt muhim — oxirgi marta sog'lom qachon (last well). 103.",
+        min_required_topics=3,
+        nodes=(
+            _node("st_time", "stroke_last_well", "triage",
+                  "Belgi aniq qachon boshlandi — soat nechada? Oxirgi marta sog'lom qachon edingiz?"),
+            _node("st_deficit", "stroke_deficit", "discriminator",
+                  "Qaysi tomonda — yuz, qo'l, oyoq, nutq?",
+                  depends_on=("stroke_last_well",)),
+            _node("st_progression", "stroke_progression", "discriminator",
+                  "Belgi kuchayaptimi yoki barqaror?",
+                  depends_on=("stroke_deficit",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="migraine",
+        syndrome="Migraine",
+        syndrome_label_uz="Migren",
+        base_category="headache",
+        description_uz="Migren tipidagi bosh og'rig'i",
+        recognition_keywords=("migren", "migraine", "chakka og'ri", "pulsatsiya"),
+        recognition_patterns=(r"migren", r"migraine", r"chakka\s*og['']?ri"),
+        priority=92,
+        triage_must_not_miss="SNOOP: thunderclap, nevrologik defitsit, isitma.",
+        differential_targets=("Migren", "Tension-type headache", "Klaster bosh og'rig'i", "Ikkinchi darajali bosh og'rig'i"),
+        min_required_topics=4,
+        nodes=(
+            _node("mg_triage", "migraine_snoop", "triage",
+                  "SNOOP screen",
+                  question_uz="Bosh og'rig'i birdan eng kuchli darajada boshlandimi yoki nutq/ko'rish/kuchsizlik bormi?",
+                  clinical_info_label="SNOOP skriningi"),
+            _node("mg_character", "migraine_character", "discriminator",
+                  "Character",
+                  question_uz="Og'riq pulsatsiya qiladimi, bir tomonda va qancha davom etadi?",
+                  depends_on=("migraine_snoop",),
+                  clinical_info_label="Xarakter va lokalizatsiya"),
+            _node("mg_associated", "migraine_associated", "discriminator",
+                  "Associated symptoms",
+                  question_uz="Ko'ngil aynishi, yorug'lik/sezgirlik yoki ko'rish oldidan chaqmoq bormi?",
+                  depends_on=("migraine_character",),
+                  clinical_info_label="Qo'shimcha belgilar"),
+            _node("mg_pattern", "migraine_pattern", "context",
+                  "Pattern",
+                  question_uz="Bosh og'rig'i qancha marta takrorlanadi va oxirgi hujum qachon bo'lgan?",
+                  depends_on=("migraine_associated",),
+                  clinical_info_label="Chastota va pattern"),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="bell_palsy",
+        syndrome="Bell palsy",
+        syndrome_label_uz="Bell falaji (yuz nervi)",
+        base_category="facial_nerve_palsy",
+        description_uz="Bir tomonda yuz qiyshayishi",
+        recognition_keywords=("yuz qiysh", "bell", "yuz falaj", "lab tush"),
+        recognition_patterns=(r"yuz\s*qiysh", r"bell", r"lab\s*tush"),
+        priority=91,
+        triage_must_not_miss="Markaziy sabab: pogon/oyoq kuchsizligi, o'tkir bosh og'rig'i.",
+        differential_targets=("Bell falaji", "Sentral facial palsy", "Ramsay Hunt sindromi", "Insult"),
+        min_required_topics=4,
+        nodes=(
+            _node("bp_triage", "bell_central_screen", "triage",
+                  "Central screen",
+                  question_uz="Qo'l, oyoq kuchsizligi yoki o'tkir bosh og'rig'i bormi?",
+                  clinical_info_label="Markaziy sabab skriningi"),
+            _node("bp_onset", "bell_onset", "narrative",
+                  "Onset",
+                  question_uz="Yuz qiyshayishi qachondan boshlandi — birdanmi?",
+                  depends_on=("bell_central_screen",),
+                  clinical_info_label="Boshlanish"),
+            _node("bp_complete", "bell_completeness", "discriminator",
+                  "Peripheral vs central",
+                  question_uz="Ko'z qisilishida va lab burchagida to'liq kuchsizlik bormi?",
+                  depends_on=("bell_onset",),
+                  clinical_info_label="Periferik belgilar"),
+            _node("bp_ear", "bell_ear_symptoms", "context",
+                  "Ear symptoms",
+                  question_uz="Quloq og'rig'i, tovush sezuvchanligi yoki quloq atrofida toshmalar bormi?",
+                  depends_on=("bell_completeness",),
+                  clinical_info_label="Quloq belgilari"),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="unclassified_neurology",
+        syndrome="Unclassified neurological syndrome",
+        syndrome_label_uz="Nevrologik sindrom (aniqlashtirilmoqda)",
+        base_category="neuropathy",
+        description_uz="Aniq pathway tanlanmaguncha — neytral nevrologik baholash",
+        priority=5,
+        min_required_topics=3,
+        differential_targets=("Klinik suratga qarab aniqlanadi",),
+        nodes=(
+            _node("un_main", "unclassified_main", "narrative",
+                  "Main concern",
+                  question_uz="Asosiy muammoingizni o'z so'zingiz bilan ayting — nima bezovta qilmoqda?"),
+            _node("un_onset", "unclassified_onset", "narrative",
+                  "Onset",
+                  question_uz="Qachondan boshlangan?",
+                  depends_on=("unclassified_main",)),
+            _node("un_red", "unclassified_red_flags", "triage",
+                  "Red flags",
+                  question_uz="Kuchsizlik, nutq, ko'rish yoki o'tkir bosh og'rig'i bormi?",
+                  depends_on=("unclassified_onset",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="general_neurology",
+        syndrome="Unclassified neurological syndrome",
+        syndrome_label_uz="Nevrologik sindrom (aniqlashtirilmoqda)",
+        base_category="other_neurological",
+        description_uz="Aniq pathway tanlanmaguncha — umumiy nevrologik baholash",
+        priority=10,
+        min_required_topics=3,
+        nodes=(
+            _node("gn_main", "general_main_complaint", "narrative",
+                  "Asosiy muammoingizni o'z so'zingiz bilan ayting — nima bezovta qilmoqda?"),
+            _node("gn_onset", "general_onset", "narrative",
+                  "Qachondan boshlangan?",
+                  depends_on=("general_main_complaint",)),
+            _node("gn_red_flags", "general_red_flags", "triage",
+                  "Kuchsizlik, nutq, ko'rish, hush yoki o'tkir bosh og'rig'i bormi?",
+                  depends_on=("general_onset",)),
+        ),
+    ))
+
+    _register(ClinicalPathway(
+        id="memory_cognitive",
+        syndrome="Cognitive / memory syndrome",
+        syndrome_label_uz="Kognitiv / xotira sindromi",
+        base_category="memory_problems",
+        description_uz="Xotira va kognitiv shikoyatlar",
+        recognition_keywords=("xotira", "unut", "eslay olmay", "demens"),
+        priority=65,
+        min_required_topics=3,
+        nodes=(
+            _node("mem_triage", "memory_red_flags", "triage",
+                  "Tez progressiya, bosh og'rig'i, nutq yoki yurish buzilishi bormi?"),
+            _node("mem_onset", "memory_onset", "narrative",
+                  "Xotira muammosi qachondan va qanday kuchayapti?",
+                  depends_on=("memory_red_flags",)),
+            _node("mem_function", "memory_function", "context",
+                  "Kundalik ishlar — pul, dori, yo'l topish — qanday ta'sir qilmoqda?",
+                  depends_on=("memory_onset",)),
+        ),
+    ))
+
+
+_bootstrap_pathways()

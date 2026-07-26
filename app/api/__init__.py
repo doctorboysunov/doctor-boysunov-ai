@@ -1,5 +1,6 @@
-"""Run patient intake API: uvicorn app.api.patient_intake_api:app
-Run dashboard API: uvicorn app.api.dashboard_api:app
-Run EMR API: uvicorn app.api.emr_api:app
-Run clinic locator API: uvicorn app.api.clinic_api:app
+"""Run platform services:
+
+  uvicorn app.api.platform_api:app --port 8000   # Medical OS V1 (recommended)
+  uvicorn app.api.dashboard_api:app --port 8001  # Legacy dashboard only
+  uvicorn app.api.emr_api:app --port 8002        # Legacy EMR only
 """
