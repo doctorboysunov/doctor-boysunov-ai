@@ -62,7 +62,7 @@ def _turn(messages: list, answers: dict, text: str):
 def main() -> None:
     init_db()
     runner = TestRunner()
-    runner.check("engine_version_v6", ENGINE_VERSION == "6.4.0", ENGINE_VERSION)
+    runner.check("engine_version_v6", ENGINE_VERSION == "6.5.0", ENGINE_VERSION)
 
     # Complaint recognition — left leg pain must not fall back to other_neurological
     leg = "Chap oyoq og'riyapti"
@@ -304,6 +304,45 @@ def main() -> None:
         "lumbar_spine" not in slug_closed.patient_reply.lower(),
         slug_closed.patient_reply[:200],
     )
+
+    # Every registered clinical pathway must have a disease-specific reasoning
+    # profile (mandatory questions, red flags, differential, investigations,
+    # treatment, referral) — not the generic single-diagnosis fallback.
+    from app.clinical_brain.clinical_pathways import all_pathways
+    from app.consultation_intelligence.pathway_knowledge import get_reasoning_profile
+    from app.consultation_intelligence.differential_engine import update_differential, build_clinical_assessment
+    from app.consultation_intelligence.closure_verifier import assess_closure_readiness
+
+    for pw in all_pathways():
+        profile = get_reasoning_profile(pw.id)
+        runner.check(f"reasoning_profile_exists:{pw.id}", profile is not None, pw.id)
+        if profile is None:
+            continue
+        runner.check(
+            f"reasoning_profile_has_diagnoses:{pw.id}",
+            len(profile.diagnoses) >= 2,
+            f"{len(profile.diagnoses)} diagnoses",
+        )
+
+        probe_state = ConsultationState.load({})
+        probe_state.pathway_id = pw.id
+        probe_facts = {node.topic_slug: "positive" for node in pw.nodes}
+        probe_differential = update_differential(probe_state, probe_facts)
+        total_pct = sum(float(d.get("probability_pct") or 0) for d in probe_differential)
+        runner.check(
+            f"differential_sums_to_100:{pw.id}",
+            99.0 <= total_pct <= 101.0,
+            f"total={total_pct}",
+        )
+        probe_state.differential = probe_differential
+        probe_state.clinical_assessment = build_clinical_assessment(probe_state, probe_differential)
+        probe_state.answered_slugs = [n.topic_slug for n in pw.nodes]
+        readiness = assess_closure_readiness(probe_state)
+        runner.check(
+            f"closure_readiness_computable:{pw.id}",
+            isinstance(readiness.ready, bool),
+            str(readiness.checks),
+        )
 
     print()
     print("=" * 72)

@@ -1,4 +1,4 @@
-﻿"""Phase 5/6 вЂ” Consultation Intelligence Engine verification."""
+"""Phase 5/6 — Consultation Intelligence Engine verification."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class TestRunner:
 
 def main() -> None:
     runner = TestRunner()
-    runner.check("engine_version", ENGINE_VERSION == "6.4.0", ENGINE_VERSION)
+    runner.check("engine_version", ENGINE_VERSION == "6.5.0", ENGINE_VERSION)
 
     known: dict = {}
     messages: list[dict[str, str]] = []
