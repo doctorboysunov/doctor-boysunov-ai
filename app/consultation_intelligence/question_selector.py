@@ -139,6 +139,44 @@ def select_best_node(state: ConsultationState) -> tuple[PathwayNode, str] | None
     return node, purpose
 
 
+def select_best_node_among(
+    state: ConsultationState, candidate_slugs: list[str] | set[str]
+) -> tuple[PathwayNode, str] | None:
+    """
+    Adaptive next-question choice restricted to a candidate set (e.g. still-pending
+    mandatory/red-flag/competing topics). Unlike a fixed script, the node actually
+    asked next depends on the live differential: it prioritizes closing an active
+    must-not-miss diagnosis, splitting two close competing diagnoses, or reducing
+    uncertainty — not merely the order the topics were authored in.
+    """
+    pathway = get_pathway(state.pathway_id)
+    if not pathway:
+        return None
+
+    candidates = set(candidate_slugs)
+    answered = set(state.answered_slugs)
+    uncertainty = float((state.clinical_assessment or {}).get("uncertainty_score", 0.5))
+    if not state.clinical_assessment and state.differential:
+        uncertainty = compute_uncertainty(state.differential)
+
+    scored: list[tuple[PathwayNode, float, str]] = []
+    for node in pathway.nodes:
+        if node.topic_slug not in candidates:
+            continue
+        if node.topic_slug in answered:
+            continue
+        if not _dependencies_met(node, answered):
+            continue
+        purpose = diagnostic_purpose(state, node)
+        scored.append((node, _score_node(node, state, uncertainty), purpose))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[1], reverse=True)
+    node, _, purpose = scored[0]
+    return node, purpose
+
+
 def mandatory_topics_unanswered(state: ConsultationState) -> list[str]:
     pathway = get_pathway(state.pathway_id)
     if not pathway:

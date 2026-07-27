@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from app.clinical_brain.clinical_pathways import get_pathway
 from app.consultation_intelligence.closure_verifier import assess_closure_readiness
 from app.consultation_intelligence.contradiction_detector import detect_contradictions
-from app.consultation_intelligence.question_selector import select_best_node
+from app.consultation_intelligence.question_selector import select_best_node, select_best_node_among
 from app.consultation_intelligence.state import ConsultationState, EmergencyStatus
 
 
@@ -122,14 +122,26 @@ class DecisionEngine:
                 missing_information=remaining,
             )
 
-        # Prioritize remaining mandatory / red-flag / competing-dx topics
+        # Prioritize remaining mandatory / red-flag / competing-dx topics — but the
+        # ONE actually asked next is chosen adaptively by diagnostic value (which
+        # active must-not-miss it helps exclude, whether it splits two close
+        # competing diagnoses, how much it reduces uncertainty), not by the fixed
+        # order the topics happen to be declared in the pathway.
         if remaining:
-            slug = remaining[0]
-            node = _node_for_slug(state.pathway_id, slug)
-            if node:
-                from app.consultation_intelligence.question_selector import diagnostic_purpose
+            picked = select_best_node_among(state, remaining)
+            if picked is None:
+                # Dependencies not yet satisfied for any remaining node (e.g. still
+                # waiting on the screening question) — fall back to declared order.
+                slug = remaining[0]
+                node = _node_for_slug(state.pathway_id, slug)
+                purpose = ""
+                if node:
+                    from app.consultation_intelligence.question_selector import diagnostic_purpose
 
-                purpose = diagnostic_purpose(state, node)
+                    purpose = diagnostic_purpose(state, node)
+            else:
+                node, purpose = picked
+            if node:
                 blocker = readiness.blockers[0] if readiness.blockers else "evidence_collection"
                 return ClinicalDecision(
                     action="ask",

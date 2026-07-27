@@ -62,7 +62,7 @@ def _turn(messages: list, answers: dict, text: str):
 def main() -> None:
     init_db()
     runner = TestRunner()
-    runner.check("engine_version_v6", ENGINE_VERSION == "6.5.0", ENGINE_VERSION)
+    runner.check("engine_version_v6", ENGINE_VERSION == "6.6.0", ENGINE_VERSION)
 
     # Complaint recognition — left leg pain must not fall back to other_neurological
     leg = "Chap oyoq og'riyapti"
@@ -343,6 +343,95 @@ def main() -> None:
             isinstance(readiness.ready, bool),
             str(readiness.checks),
         )
+
+    # Adaptive question ordering — the next question depends on the live
+    # differential, not a fixed script. Positive vs negative central screen
+    # must flip the leading diagnosis for the same pathway/onset.
+    from app.consultation_intelligence.decision_engine import DecisionEngine
+
+    engine = DecisionEngine()
+
+    def _probe(pathway_id: str, extra_answers: dict[str, tuple[str, str]]) -> ConsultationState:
+        st = ConsultationState.load({})
+        st.pathway_id = pathway_id
+        st.pathway_locked = True
+        st.record_answer("opening_complaint", "yuzim qiyshaydi", "yuzim qiyshaydi")
+        for slug, (raw, parsed) in extra_answers.items():
+            st.record_answer(slug, raw, parsed)
+        st.differential = update_differential(st, st.fact_map())
+        st.clinical_assessment = build_clinical_assessment(st, st.differential)
+        return st
+
+    fn_pos = _probe(
+        "facial_nerve",
+        {
+            "facial_nerve_central_screen": ("ha, qo'lim ham kuchsiz", "positive"),
+            "facial_nerve_onset": ("birdan", "sudden_onset"),
+        },
+    )
+    fn_neg = _probe(
+        "facial_nerve",
+        {
+            "facial_nerve_central_screen": ("yo'q", "negative"),
+            "facial_nerve_onset": ("birdan", "sudden_onset"),
+        },
+    )
+    runner.check(
+        "adaptive_differential_flips_with_evidence",
+        fn_pos.differential[0]["name"] != fn_neg.differential[0]["name"],
+        f"{fn_pos.differential[0]['name']} vs {fn_neg.differential[0]['name']}",
+    )
+    runner.check(
+        "adaptive_central_positive_flags_stroke_mimic",
+        "sentral" in fn_pos.differential[0]["name"].lower() or "insult" in fn_pos.differential[0]["name"].lower(),
+        fn_pos.differential[0]["name"],
+    )
+
+    # Variable-length consultation — a clear-cut presentation should close with
+    # fewer questions (skipping the optional low-yield node) than an ambiguous
+    # one that genuinely needs more evidence before concluding.
+    def _run_vestibular(answers_pool: dict[str, tuple[str, str]]) -> int:
+        st = ConsultationState.load({})
+        st.pathway_id = "vestibular"
+        st.pathway_locked = True
+        st.record_answer("opening_complaint", "boshim aylanadi", "boshim aylanadi")
+        for turns in range(10):
+            st.differential = update_differential(st, st.fact_map())
+            st.clinical_assessment = build_clinical_assessment(st, st.differential)
+            decision = engine.decide(st)
+            if decision.action == "closure":
+                return turns
+            raw, parsed = answers_pool.get(decision.topic_slug, ("ha", "positive"))
+            st.record_answer(decision.topic_slug, raw, parsed)
+        return 10
+
+    clear_cut_turns = _run_vestibular(
+        {
+            "vestibular_central_screen": ("yo'q", "negative"),
+            "vestibular_timing": ("bir necha soniya", "bir necha soniya"),
+            "vestibular_position": ("ha, boshni burganda", "positive"),
+            "vestibular_hearing": ("yo'q", "negative"),
+        }
+    )
+    ambiguous_turns = _run_vestibular(
+        {
+            "vestibular_central_screen": ("yo'q", "negative"),
+            "vestibular_timing": ("bir necha soat", "bir necha soat"),
+            "vestibular_position": ("aniq emas", "aniq emas"),
+            "vestibular_hearing": ("biroz eshitish pasaygan", "biroz eshitish pasaygan"),
+            "vestibular_associated": ("qusish bor", "qusish bor"),
+        }
+    )
+    runner.check(
+        "adaptive_length_clear_case_shorter",
+        clear_cut_turns <= ambiguous_turns,
+        f"clear={clear_cut_turns} ambiguous={ambiguous_turns}",
+    )
+    runner.check(
+        "adaptive_length_skips_optional_when_confident",
+        clear_cut_turns < 5,
+        f"clear_cut_turns={clear_cut_turns}",
+    )
 
     print()
     print("=" * 72)

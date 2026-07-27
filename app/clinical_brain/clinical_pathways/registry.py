@@ -107,13 +107,14 @@ def _bootstrap_pathways() -> None:
                   depends_on=("lumbar_rad_onset",)),
             _node("lr_deficit", "lumbar_rad_neuro_deficit", "discriminator",
                   "Oyoqda kuchsizlik, uyuqish yoki refleks o'zgarishi bormi?",
-                  depends_on=("lumbar_rad_radiation",)),
+                  depends_on=("lumbar_rad_onset",)),
             _node("lr_aggravating", "lumbar_rad_aggravating", "context",
                   "Nima qilib kuchayadi/yengillaydi — yo'rganda, o'tirganda, yoqishda?",
-                  depends_on=("lumbar_rad_neuro_deficit",)),
+                  required=False,
+                  depends_on=("lumbar_rad_onset",)),
             _node("lr_red_flags", "lumbar_rad_red_flags", "triage",
                   "Isitma, og'ir vazn yo'qotish, travma yoki saraton tarixi bormi?",
-                  depends_on=("lumbar_rad_aggravating",)),
+                  depends_on=("lumbar_rad_onset",)),
         ),
     ))
 
@@ -139,10 +140,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("lumbar_spine_onset",)),
             _node("ls_function", "lumbar_spine_function", "context",
                   "Kundalik faoliyatingizga qanday ta'sir qilmoqda — yurish, o'tirish?",
-                  depends_on=("lumbar_spine_location",)),
+                  required=False,
+                  depends_on=("lumbar_spine_onset",)),
             _node("ls_radiation", "lumbar_spine_radiation", "discriminator",
                   "Og'riq oyoqqa yoki chanoqqa tarqaladimi?",
-                  depends_on=("lumbar_spine_function",)),
+                  depends_on=("lumbar_spine_onset",)),
         ),
     ))
 
@@ -168,10 +170,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("cervical_onset",)),
             _node("cs_red_flags", "cervical_red_flags", "triage",
                   "Travma, isitma, nutq yoki ko'rish buzilishi bormi?",
-                  depends_on=("cervical_radiation",)),
+                  depends_on=("cervical_onset",)),
             _node("cs_aggravating", "cervical_aggravating", "context",
                   "Bosh harakati og'riqni kuchaytiradimi?",
-                  depends_on=("cervical_red_flags",)),
+                  required=False,
+                  depends_on=("cervical_onset",)),
         ),
     ))
 
@@ -193,7 +196,7 @@ def _bootstrap_pathways() -> None:
         ),
         priority=88,
         triage_must_not_miss="Myelopatiya, o'tkir travma, infarkt emasmi tekshirish.",
-        min_required_topics=5,
+        min_required_topics=4,
         nodes=(
             _node("cr_triage", "cervical_rad_myelo_screen", "triage",
                   "Ikki qo'lda kuchsizlik, yurish muammosi yoki sezgi tez pasayishi bormi?"),
@@ -205,10 +208,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("cervical_rad_distribution",)),
             _node("cr_deficit", "cervical_rad_motor", "discriminator",
                   "Qo'lda kuchsizlik yoki buyum tushib qoladimi?",
-                  depends_on=("cervical_rad_neck_link",)),
+                  depends_on=("cervical_rad_distribution",)),
             _node("cr_aggravating", "cervical_rad_aggravating", "context",
                   "Bo'yni burish og'riqni kuchaytiradimi?",
-                  depends_on=("cervical_rad_motor",)),
+                  required=False,
+                  depends_on=("cervical_rad_distribution",)),
         ),
     ))
 
@@ -234,10 +238,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("neuropathy_distribution",)),
             _node("pn_associated", "neuropathy_associated", "context",
                   "Qandli diabet, giyohvand modda yoki dorilar qabul qilasizmi?",
-                  depends_on=("neuropathy_onset",)),
+                  required=False,
+                  depends_on=("neuropathy_distribution",)),
             _node("pn_motor", "neuropathy_motor", "discriminator",
                   "Kuchsizlik ham bormi yoki faqat sezgi buzilishi?",
-                  depends_on=("neuropathy_associated",)),
+                  depends_on=("neuropathy_distribution",)),
         ),
     ))
 
@@ -251,7 +256,7 @@ def _bootstrap_pathways() -> None:
         recognition_patterns=(r"bosh\s*og['']?ri", r"migren"),
         priority=80,
         triage_must_not_miss="SNOOP: thunderclap, nevrologik defitsit, isitma, 50+ yangi, progressive.",
-        min_required_topics=5,
+        min_required_topics=4,
         nodes=(
             _node("ha_triage", "headache_snoop", "triage",
                   "Birdan eng kuchli bosh og'rig'i, nutq/ko'rish/kuchsizlik yoki isitma bormi?"),
@@ -263,10 +268,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("headache_onset",)),
             _node("ha_associated", "headache_associated", "discriminator",
                   "Ko'ngil aynishi, yorug'lik/sezgirlik yoki ko'rish oldidan chaqmoq bormi?",
-                  depends_on=("headache_character",)),
+                  depends_on=("headache_onset",)),
             _node("ha_pattern", "headache_pattern", "context",
                   "Qancha vaqtdan beri va qancha kun davom etadi?",
-                  depends_on=("headache_associated",)),
+                  required=False,
+                  depends_on=("headache_onset",)),
         ),
     ))
 
@@ -292,10 +298,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("vestibular_timing",)),
             _node("ve_hearing", "vestibular_hearing", "context",
                   "Eshitish pasayishi yoki shox tortish bormi?",
-                  depends_on=("vestibular_position",)),
+                  depends_on=("vestibular_timing",)),
             _node("ve_associated", "vestibular_associated", "context",
                   "Ko'ngil aynishi, qusish yoki yurak urishi ham bormi?",
-                  depends_on=("vestibular_hearing",)),
+                  required=False,
+                  depends_on=("vestibular_timing",)),
         ),
     ))
 
@@ -321,10 +328,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("facial_nerve_onset",)),
             _node("fn_complete", "facial_nerve_complete", "discriminator",
                   "Ko'z qisilishida va lab burchagida to'liq kuchsizlik bormi?",
-                  depends_on=("facial_nerve_side",)),
+                  depends_on=("facial_nerve_onset",)),
             _node("fn_ear", "facial_nerve_ear", "context",
                   "Quloq og'rig'i, tovush sezuvchanligi yoki lokal tomoq og'rig'i bormi?",
-                  depends_on=("facial_nerve_complete",)),
+                  required=False,
+                  depends_on=("facial_nerve_onset",)),
         ),
     ))
 
@@ -350,10 +358,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("parkinsonian_rest_action",)),
             _node("pk_associated", "parkinsonian_associated", "context",
                   "Harakat sekinlashishi, yuz ifodasi kamayishi yoki yurish o'zgarishi bormi?",
-                  depends_on=("parkinsonian_distribution",)),
+                  depends_on=("parkinsonian_rest_action",)),
             _node("pk_meds", "parkinsonian_meds", "context",
                   "Metoklopramid, antipsixotik yoki boshqa dorilar qabul qilasizmi?",
-                  depends_on=("parkinsonian_associated",)),
+                  required=False,
+                  depends_on=("parkinsonian_rest_action",)),
         ),
     ))
 
@@ -367,7 +376,7 @@ def _bootstrap_pathways() -> None:
         recognition_patterns=(r"tutqanoq", r"epilep", r"seizure", r"hushdan\s*ket", r"fit\b"),
         priority=95,
         triage_must_not_miss="Aktiv hujum, birinchi tutqanoq, homiladorlik, travma — shoshilinch.",
-        min_required_topics=5,
+        min_required_topics=4,
         nodes=(
             _node("ep_triage", "epilepsy_active_seizure", "triage",
                   "Hozir hujum davom etayaptimi yoki hushsiz holat bormi?"),
@@ -379,10 +388,11 @@ def _bootstrap_pathways() -> None:
                   depends_on=("epilepsy_first_ever",)),
             _node("ep_duration", "epilepsy_duration", "discriminator",
                   "Hujum qancha vaqt davom etadi va keyin nima bo'ladi?",
-                  depends_on=("epilepsy_semiology",)),
+                  depends_on=("epilepsy_first_ever",)),
             _node("ep_triggers", "epilepsy_triggers", "context",
                   "Uyqusizlik, spirt, dori yoki stress bilan bog'liqmi?",
-                  depends_on=("epilepsy_duration",)),
+                  required=False,
+                  depends_on=("epilepsy_first_ever",)),
         ),
     ))
 
@@ -420,7 +430,7 @@ def _bootstrap_pathways() -> None:
         priority=92,
         triage_must_not_miss="SNOOP: thunderclap, nevrologik defitsit, isitma.",
         differential_targets=("Migren", "Tension-type headache", "Klaster bosh og'rig'i", "Ikkinchi darajali bosh og'rig'i"),
-        min_required_topics=4,
+        min_required_topics=3,
         nodes=(
             _node("mg_triage", "migraine_snoop", "triage",
                   "SNOOP screen",
@@ -439,7 +449,8 @@ def _bootstrap_pathways() -> None:
             _node("mg_pattern", "migraine_pattern", "context",
                   "Pattern",
                   question_uz="Bosh og'rig'i qancha marta takrorlanadi va oxirgi hujum qachon bo'lgan?",
-                  depends_on=("migraine_associated",),
+                  required=False,
+                  depends_on=("migraine_character",),
                   clinical_info_label="Chastota va pattern"),
         ),
     ))
@@ -455,7 +466,7 @@ def _bootstrap_pathways() -> None:
         priority=91,
         triage_must_not_miss="Markaziy sabab: pogon/oyoq kuchsizligi, o'tkir bosh og'rig'i.",
         differential_targets=("Bell falaji", "Sentral facial palsy", "Ramsay Hunt sindromi", "Insult"),
-        min_required_topics=4,
+        min_required_topics=3,
         nodes=(
             _node("bp_triage", "bell_central_screen", "triage",
                   "Central screen",
@@ -474,7 +485,8 @@ def _bootstrap_pathways() -> None:
             _node("bp_ear", "bell_ear_symptoms", "context",
                   "Ear symptoms",
                   question_uz="Quloq og'rig'i, tovush sezuvchanligi yoki quloq atrofida toshmalar bormi?",
-                  depends_on=("bell_completeness",),
+                  required=False,
+                  depends_on=("bell_onset",),
                   clinical_info_label="Quloq belgilari"),
         ),
     ))

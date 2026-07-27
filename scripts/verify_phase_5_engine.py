@@ -45,7 +45,7 @@ class TestRunner:
 
 def main() -> None:
     runner = TestRunner()
-    runner.check("engine_version", ENGINE_VERSION == "6.5.0", ENGINE_VERSION)
+    runner.check("engine_version", ENGINE_VERSION == "6.6.0", ENGINE_VERSION)
 
     known: dict = {}
     messages: list[dict[str, str]] = []
