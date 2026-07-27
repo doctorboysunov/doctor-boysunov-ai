@@ -528,8 +528,10 @@ def _bootstrap() -> None:
                 DiagnosisProfile("Zudlik talab qiluvchi nevrologik sabab", 40.0, must_not_miss=True),
             ),
             evidence_rules=(
-                EvidenceRule("red_flags", r"positive|kuchsiz|nutq|ko'rish|bosh og'ri", {"Zudlik talab qiluvchi nevrologik sabab": 2.2, "Klinik suratga qarab aniqlanadi": 0.6}),
+                EvidenceRule("red_flags", r"positive|nutq|ko'rish|birdan.*kuchsiz|kuchsiz.*birdan|bosh og'ri", {"Zudlik talab qiluvchi nevrologik sabab": 2.2, "Klinik suratga qarab aniqlanadi": 0.6}),
                 EvidenceRule("red_flags", r"negative", {"Zudlik talab qiluvchi nevrologik sabab": 0.4}),
+                EvidenceRule("associated", r"tarqal|kuchay", {"Zudlik talab qiluvchi nevrologik sabab": 1.3}),
+                EvidenceRule("duration", r"oy|yil|surunkali|uzoq", {"Klinik suratga qarab aniqlanadi": 1.2, "Zudlik talab qiluvchi nevrologik sabab": 0.7}),
             ),
             investigations={"Zudlik talab qiluvchi nevrologik sabab": ("Zudlik nevrolog ko'rigi",)},
             treatment={},
@@ -545,8 +547,10 @@ def _bootstrap() -> None:
                 DiagnosisProfile("Zudlik talab qiluvchi nevrologik sabab", 40.0, must_not_miss=True),
             ),
             evidence_rules=(
-                EvidenceRule("red_flags", r"positive|kuchsiz|nutq|ko'rish|hush|bosh og'ri", {"Zudlik talab qiluvchi nevrologik sabab": 2.2, "Klinik suratga qarab aniqlanadi": 0.6}),
+                EvidenceRule("red_flags", r"positive|nutq|ko'rish|hush|birdan.*kuchsiz|kuchsiz.*birdan|bosh og'ri", {"Zudlik talab qiluvchi nevrologik sabab": 2.2, "Klinik suratga qarab aniqlanadi": 0.6}),
                 EvidenceRule("red_flags", r"negative", {"Zudlik talab qiluvchi nevrologik sabab": 0.4}),
+                EvidenceRule("associated", r"tarqal|kuchay", {"Zudlik talab qiluvchi nevrologik sabab": 1.3}),
+                EvidenceRule("duration", r"oy|yil|surunkali|uzoq", {"Klinik suratga qarab aniqlanadi": 1.2, "Zudlik talab qiluvchi nevrologik sabab": 0.7}),
             ),
             investigations={"Zudlik talab qiluvchi nevrologik sabab": ("Zudlik nevrolog ko'rigi",)},
             treatment={},

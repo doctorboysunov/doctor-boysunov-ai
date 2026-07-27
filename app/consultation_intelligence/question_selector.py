@@ -177,6 +177,46 @@ def select_best_node_among(
     return node, purpose
 
 
+_GENERIC_PROBES: tuple[tuple[str, str, str], ...] = (
+    (
+        "extra_probe_associated",
+        "associated",
+        "Yana qanday qo'shimcha nevrologik belgilar bor — uyushish, ko'rish o'zgarishi yoki "
+        "muvozanat buzilishi kabi?",
+    ),
+    (
+        "extra_probe_progression",
+        "progression",
+        "Belgi vaqt o'tishi bilan kuchayaptimi, barqarormi yoki yaxshilanyaptimi?",
+    ),
+    (
+        "extra_probe_function",
+        "function",
+        "Bu holat kundalik ishlaringizga (yurish, ishlash, uxlash, uxlash sifati) qanday ta'sir qilmoqda?",
+    ),
+)
+
+
+def select_extra_probe(state: ConsultationState) -> tuple[str, str, str] | None:
+    """Bounded, pathway-agnostic differentiator questions.
+
+    Used ONLY as a last resort when the pathway's own fixed question pool
+    (registry.py) is exhausted but the pre-closure checklist still finds
+    evidence insufficient (low leading gap / high uncertainty / too few
+    clinical facts). A senior neurologist would keep probing rather than
+    conclude on a thin picture — but this is capped at ``len(_GENERIC_PROBES)``
+    rounds so the consultation can never loop forever; once exhausted the
+    engine closes with an appropriately hedged summary instead of repeating
+    itself.
+    """
+    answered = set(state.answered_slugs)
+    for slug, keyword, question in _GENERIC_PROBES:
+        if slug in answered:
+            continue
+        return slug, question, f"Qo'shimcha ayiruvchi ma'lumot ({keyword}) — ishonchli xulosaga yetkazish"
+    return None
+
+
 def mandatory_topics_unanswered(state: ConsultationState) -> list[str]:
     pathway = get_pathway(state.pathway_id)
     if not pathway:

@@ -105,7 +105,13 @@ class ResponseGenerator:
         if state.differential:
             closure.most_likely_diagnosis = state.differential[0]["name"]
             closure.differential_diagnosis = [d["name"] for d in state.differential[1:4]]
-        return format_patient_closure_summary(closure)
+        text = format_patient_closure_summary(closure)
+        if state.clinical_assessment.get("closure_confidence") == "hedged":
+            text += (
+                "\n\nEslatma: yuqoridagi taxminlar hozircha to'liq ishonch bilan emas — "
+                "aniq tashxis uchun shifokor ko'rigi va qo'shimcha tekshiruvlar tavsiya etiladi."
+            )
+        return text
 
     def emergency(self, flags: list[str]) -> str:
         from app.services.consultation_red_flags import build_consultation_emergency_response

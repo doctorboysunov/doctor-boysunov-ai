@@ -17,15 +17,22 @@ RED_FLAG_RULES: tuple[RedFlagRule, ...] = (
     RedFlagRule(
         "stroke",
         (
-            r"insult",
-            r"stroke",
-            r"falaj",
+            # Explicit/unambiguous stroke language — safe as a standalone trigger.
+            r"\binsult\b",
+            r"\bstroke\b",
+            r"birdan\s*falaj",
+            r"falaj.*(yuz|qo['']?l|oyoq).*bir\s*tomon",
+            r"(yuz|qo['']?l|oyoq).*bir\s*tomon.*falaj",
             r"yuz qismi qaltir",
             r"nutq buzil",
             r"gap.*buzil",
             r"qo['']?l.*ishlamay",
-            r"kuchsiz",
             r"sudden weakness",
+            # Generic "kuchsiz" (weak/weakness) is extremely common in benign
+            # radiculopathy/neuropathy/fatigue descriptions — only treat it as a
+            # stroke red flag when it co-occurs with a focal or acute-onset marker
+            # (face, speech, one-sided, sudden), matching real FAST criteria.
+            r"(?=.*\bkuchsiz)(?=.*(yuz|nutq|gapir|bir\s*tomon|birdan))",
         ),
         "possible stroke",
     ),

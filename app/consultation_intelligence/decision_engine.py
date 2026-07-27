@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from app.clinical_brain.clinical_pathways import get_pathway
 from app.consultation_intelligence.closure_verifier import assess_closure_readiness
 from app.consultation_intelligence.contradiction_detector import detect_contradictions
-from app.consultation_intelligence.question_selector import select_best_node, select_best_node_among
+from app.consultation_intelligence.question_selector import (
+    select_best_node,
+    select_best_node_among,
+    select_extra_probe,
+)
 from app.consultation_intelligence.state import ConsultationState, EmergencyStatus
 
 
@@ -70,6 +74,8 @@ class DecisionEngine:
         state.ready_for_closure = readiness.ready
 
         if readiness.ready:
+            state.clinical_assessment = dict(state.clinical_assessment or {})
+            state.clinical_assessment["closure_confidence"] = "confident"
             return ClinicalDecision(
                 action="closure",
                 rationale=(
@@ -154,6 +160,28 @@ class DecisionEngine:
 
         best = select_best_node(state)
         if best is None:
+            # The pathway's own registry questions are exhausted. Never force a
+            # confident-sounding closure on thin evidence — a senior neurologist
+            # keeps probing with a few more genuinely useful differentiators
+            # first (bounded, so this can't loop forever).
+            if not readiness.ready:
+                extra = select_extra_probe(state)
+                if extra:
+                    slug, text, purpose = extra
+                    return ClinicalDecision(
+                        action="ask",
+                        topic_slug=slug,
+                        question_text=text,
+                        rationale=(
+                            "Pathway questions exhausted but evidence still insufficient "
+                            f"({readiness.blockers[0] if readiness.blockers else 'uncertain'}) — "
+                            "continue with broader differentiators."
+                        ),
+                        diagnostic_purpose=purpose,
+                        missing_information=remaining,
+                    )
+                state.clinical_assessment = dict(state.clinical_assessment or {})
+                state.clinical_assessment["closure_confidence"] = "hedged"
             return ClinicalDecision(
                 action="closure",
                 rationale="No further high-value questions; pathway exhausted.",

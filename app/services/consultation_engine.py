@@ -652,6 +652,15 @@ def _persist_emergency(patient_id: int, visit_id: int, text: str, flags: list[st
 
 
 def _is_immediate_emergency(text: str, flags: list[str]) -> bool:
+    """Bypass the adaptive pathway engine only for genuinely unambiguous emergencies.
+
+    ``flags`` already comes from ``detect_consultation_red_flags``, whose patterns
+    (see app/safety/red_flags.py and app/services/consultation_red_flags.py) require
+    focal/acute combinations for stroke-like wording — a bare mention of "falaj" or
+    "kuchsiz" (weakness) alone must NOT short-circuit straight to an emergency reply,
+    since that would preempt the pathway's own differential (e.g. Bell's palsy vs.
+    central stroke, or lumbar radiculopathy vs. stroke) before it collects evidence.
+    """
     lowered = text.lower()
     acute = (
         "stroke" in flags
@@ -659,7 +668,7 @@ def _is_immediate_emergency(text: str, flags: list[str]) -> bool:
         or "breathing" in flags
         or "seizure" in flags
         or "insult" in lowered
-        or "falaj" in lowered
+        or "birdan falaj" in lowered
         or "hushdan" in lowered
         or "103" in lowered
     )

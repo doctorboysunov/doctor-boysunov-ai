@@ -12,7 +12,6 @@ _ACUTE_OPENING = (
     "hush yo'q",
     "103",
     "insult",
-    "falaj",
     "nutq buzildi",
     "qo'lim ishlamay qoldi",
     "birdan falaj",

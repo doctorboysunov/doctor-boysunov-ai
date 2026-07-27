@@ -62,7 +62,7 @@ def _turn(messages: list, answers: dict, text: str):
 def main() -> None:
     init_db()
     runner = TestRunner()
-    runner.check("engine_version_v6", ENGINE_VERSION == "6.6.0", ENGINE_VERSION)
+    runner.check("engine_version_v6", ENGINE_VERSION == "6.7.0", ENGINE_VERSION)
 
     # Complaint recognition — left leg pain must not fall back to other_neurological
     leg = "Chap oyoq og'riyapti"
@@ -431,6 +431,81 @@ def main() -> None:
         "adaptive_length_skips_optional_when_confident",
         clear_cut_turns < 5,
         f"clear_cut_turns={clear_cut_turns}",
+    )
+
+    # --- Senior-neurologist reasoning regression suite (v6.7.0) ---------------
+    # 1. A bare mention of generic weakness ("kuchsiz") or paralysis-word
+    #    ("falaj") — with no face/speech/sudden-onset focal marker — must NOT
+    #    short-circuit straight to an emergency reply on the very first
+    #    message. The global pre-screen used to fire on these words alone.
+    weak_pid = upsert_user(telegram_id=9909101, username="leg_weak_only", full_name="Leg Weak Only")
+    seed_default_location(weak_pid)
+    leg_weak_only = process_consultation_turn(weak_pid, "Oyog'im kuchsizlanib qoldi, ancha vaqtdan beri")
+    runner.check(
+        "bare_weakness_word_not_instant_emergency",
+        not leg_weak_only.emergency,
+        leg_weak_only.reply[:160],
+    )
+
+    falaj_pid = upsert_user(telegram_id=9909102, username="facial_falaj_only", full_name="Facial Falaj Only")
+    seed_default_location(falaj_pid)
+    facial_falaj_only = process_consultation_turn(
+        falaj_pid, "Yuzim falaj bo'lib qoldi, ko'zim ham to'liq yumilmayapti"
+    )
+    runner.check(
+        "bare_falaj_word_not_instant_emergency",
+        not facial_falaj_only.emergency,
+        facial_falaj_only.reply[:160],
+    )
+    runner.check(
+        "bare_falaj_recognized_as_facial_pathway",
+        "?" in facial_falaj_only.reply,
+        facial_falaj_only.reply[:160],
+    )
+
+    # 2. A genuinely unambiguous stroke presentation (multiple focal deficits +
+    #    sudden onset) must still trigger the immediate global emergency path —
+    #    the fix must not have made the system blind to real emergencies.
+    stroke_pid = upsert_user(telegram_id=9909103, username="obvious_stroke", full_name="Obvious Stroke")
+    seed_default_location(stroke_pid)
+    obvious_stroke = process_consultation_turn(
+        stroke_pid, "Birdan yuzim qiyshayib qoldi, gapira olmayapman, qo'lim ishlamay qoldi"
+    )
+    runner.check(
+        "obvious_stroke_still_triggers_emergency",
+        obvious_stroke.emergency,
+        obvious_stroke.reply[:160],
+    )
+
+    # 3. A vague/unclassified complaint must not close after only the 3
+    #    minimal mandatory questions — the engine should keep probing
+    #    (optional discriminators, then bounded generic differentiators)
+    #    until real evidence-sufficiency is reached, never emergency.
+    vague_answers: dict = {}
+    vague_msgs: list[dict[str, str]] = []
+    vr = _turn(vague_msgs, vague_answers, "Nimadir g'alati his qilyapman, tushuntira olmayman")
+    turns_to_closure = 0
+    seen_questions: set[str] = set()
+    duplicate_found = False
+    for _ in range(12):
+        if vr.ready_for_help_menu or vr.consultation_state.stage.value == "emergency":
+            break
+        q = vr.consultation_state.pending_topic
+        if q and q in seen_questions:
+            duplicate_found = True
+        if q:
+            seen_questions.add(q)
+        turns_to_closure += 1
+        vr = _turn(vague_msgs, vague_answers, "Yo'q, alohida boshqa narsa sezmayapman, xuddi shunday davom etyapti")
+    runner.check(
+        "vague_complaint_not_closed_in_few_turns",
+        turns_to_closure >= 4,
+        f"turns_to_closure={turns_to_closure}",
+    )
+    runner.check(
+        "vague_complaint_no_duplicate_questions",
+        not duplicate_found,
+        str(sorted(seen_questions)),
     )
 
     print()
