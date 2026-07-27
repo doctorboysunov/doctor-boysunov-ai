@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.clinical_brain.types import DoctorEmrUpdate
+from app.consultation_intelligence.advice_engine import generate_personalized_advice
 from app.consultation_intelligence.answer_parser import parse_answer
 from app.consultation_intelligence.clinical_reasoner import ClinicalReasoner
 from app.consultation_intelligence.decision_engine import DecisionEngine
@@ -16,6 +17,10 @@ from app.consultation_intelligence.emergency import (
     update_emergency_from_pending_answer,
 )
 from app.consultation_intelligence.message_intent import is_advice_question
+from app.consultation_intelligence.new_symptom_engine import (
+    is_additive_symptom_message,
+    merge_new_symptoms,
+)
 from app.consultation_intelligence.response_generator import ResponseGenerator
 from app.consultation_intelligence.state import ConsultationStage, ConsultationState, ENGINE_VERSION
 
@@ -95,8 +100,11 @@ class ConsultationController:
             return result
 
         if is_advice_question(user_message) and state.pathway_locked:
+            advice = generate_personalized_advice(state)
             pending_q = _pending_question_text(state)
-            result.patient_reply = self._responses.advice_during_consultation(state, pending_q or None)
+            if pending_q:
+                advice = f"{advice}\n\n{pending_q.rstrip('?')}?"
+            result.patient_reply = advice
             state.persist_into(answers)
             result.consultation_state = state
             return result
@@ -108,7 +116,14 @@ class ConsultationController:
             state.opening_complaint = user_message
             state.record_answer("opening_complaint", user_message, user_message)
 
-        if state.pending_topic:
+        new_symptom_ack: str | None = None
+        skip_pending_answer = False
+        if state.pathway_locked:
+            new_symptom_ack = merge_new_symptoms(user_message, state)
+            if new_symptom_ack and is_additive_symptom_message(user_message):
+                skip_pending_answer = True
+
+        if state.pending_topic and not skip_pending_answer:
             parsed = parse_answer(state.pending_topic, user_message)
             state.record_answer(state.pending_topic, user_message, parsed)
             update_emergency_from_pending_answer(state)
@@ -157,7 +172,13 @@ class ConsultationController:
                 state.stage = ConsultationStage.AWAITING_HELP
         else:
             state.record_question(decision.topic_slug, decision.question_text)
-            if state.turn_count == 1 or len(state.answered_slugs) <= 1:
+            if new_symptom_ack:
+                q = decision.question_text.rstrip("?")
+                result.patient_reply = (
+                    f"{new_symptom_ack} ham qayd etildi. "
+                    f"Bu belgi bo'yicha muhim savol: {q}?"
+                )
+            elif state.turn_count == 1 or len(state.answered_slugs) <= 1:
                 result.patient_reply = self._responses.first_question(state, decision)
             else:
                 result.patient_reply = self._responses.follow_up_question(state, decision, user_message)

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-ENGINE_VERSION = "6.0.0"
+ENGINE_VERSION = "6.2.0"
 
 
 class ConsultationStage(str, Enum):
@@ -76,6 +76,9 @@ class ConsultationState:
     emergency_status: EmergencyStatus = EmergencyStatus.NONE
     emergency_suspect_flags: list[str] = field(default_factory=list)
 
+    secondary_symptoms: list[dict[str, Any]] = field(default_factory=list)
+    supplemental_questions: list[dict[str, Any]] = field(default_factory=list)
+
     completion_pct: float = 0.0
     ready_for_closure: bool = False
     help_menu_shown: bool = False
@@ -102,6 +105,8 @@ class ConsultationState:
             "confirmed_red_flags": list(self.confirmed_red_flags),
             "emergency_status": self.emergency_status.value,
             "emergency_suspect_flags": list(self.emergency_suspect_flags),
+            "secondary_symptoms": list(self.secondary_symptoms),
+            "supplemental_questions": list(self.supplemental_questions),
             "completion_pct": self.completion_pct,
             "ready_for_closure": self.ready_for_closure,
             "help_menu_shown": self.help_menu_shown,
@@ -159,6 +164,12 @@ class ConsultationState:
             confirmed_red_flags=[str(x) for x in (data.get("confirmed_red_flags") or []) if str(x).strip()],
             emergency_status=emergency,
             emergency_suspect_flags=[str(x) for x in (data.get("emergency_suspect_flags") or []) if str(x).strip()],
+            secondary_symptoms=[
+                dict(s) for s in (data.get("secondary_symptoms") or []) if isinstance(s, dict)
+            ],
+            supplemental_questions=[
+                dict(q) for q in (data.get("supplemental_questions") or []) if isinstance(q, dict)
+            ],
             completion_pct=float(data.get("completion_pct") or 0),
             ready_for_closure=bool(data.get("ready_for_closure")),
             help_menu_shown=bool(data.get("help_menu_shown")),

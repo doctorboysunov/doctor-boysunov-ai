@@ -62,7 +62,7 @@ def _turn(messages: list, answers: dict, text: str):
 def main() -> None:
     init_db()
     runner = TestRunner()
-    runner.check("engine_version_v6", ENGINE_VERSION == "6.0.0", ENGINE_VERSION)
+    runner.check("engine_version_v6", ENGINE_VERSION == "6.2.0", ENGINE_VERSION)
 
     # Complaint recognition — left leg pain must not fall back to other_neurological
     leg = "Chap oyoq og'riyapti"
@@ -183,8 +183,75 @@ def main() -> None:
     )
     runner.check(
         "advice_continues_consultation",
-        "davolash" in adv.patient_reply.lower() or "davom" in adv.patient_reply.lower(),
-        adv.patient_reply[:120],
+        "radikulopatiya" in adv.patient_reply.lower() or "bel-oyoq" in adv.patient_reply.lower(),
+        adv.patient_reply[:160],
+    )
+    runner.check(
+        "advice_not_generic_wait",
+        "avval muhim savollarga javob olishim kerak" not in adv.patient_reply.lower(),
+        adv.patient_reply[:160],
+    )
+
+    # Advice patterns — nima maslahat, qanday davolansam
+    adv2 = _turn(adv_msgs, adv_answers, "Nima maslahat berasan?")
+    runner.check(
+        "advice_nima_maslahat",
+        "radikulopatiya" in adv2.patient_reply.lower() or "bel-oyoq" in adv2.patient_reply.lower(),
+        adv2.patient_reply[:160],
+    )
+    adv3 = _turn(adv_msgs, adv_answers, "Qanday davolansam bo'ladi?")
+    runner.check(
+        "advice_qanday_davolansam",
+        "shifokor" in adv3.patient_reply.lower() or "radikulopatiya" in adv3.patient_reply.lower(),
+        adv3.patient_reply[:160],
+    )
+
+    # New symptom during consultation — merge headache, ask follow-up
+    ns_answers: dict = {}
+    ns_msgs: list[dict[str, str]] = []
+    _turn(ns_msgs, ns_answers, leg)
+    ns = _turn(ns_msgs, ns_answers, "Boshim ham og'riyapti")
+    runner.check(
+        "new_symptom_merged",
+        any(s.get("category") == "headache" for s in ns.consultation_state.secondary_symptoms),
+        str(ns.consultation_state.secondary_symptoms),
+    )
+    runner.check(
+        "new_symptom_followup",
+        "bosh" in ns.patient_reply.lower() and "?" in ns.patient_reply,
+        ns.patient_reply[:160],
+    )
+    runner.check(
+        "new_symptom_no_restart",
+        ns.consultation_state.pathway_id == "lumbar_radiculopathy",
+        ns.consultation_state.pathway_id,
+    )
+
+    # Leg weakness alone on cauda screen must NOT trigger emergency
+    em_answers: dict = {}
+    em_msgs: list[dict[str, str]] = []
+    _turn(em_msgs, em_answers, leg)
+    em = _turn(em_msgs, em_answers, "Ha")
+    runner.check(
+        "leg_weakness_not_stroke_emergency",
+        not em.suggests_emergency,
+        str(em.emergency_flags),
+    )
+    runner.check(
+        "leg_weakness_stays_collecting",
+        em.consultation_state.emergency_status.value in {"none", "suspected"},
+        em.consultation_state.emergency_status.value,
+    )
+
+    # Obvious cauda red flags must trigger emergency
+    cauda_answers: dict = {}
+    cauda_msgs: list[dict[str, str]] = []
+    _turn(cauda_msgs, cauda_answers, "Belim og'riyapti, ikki oyoq kuchsiz, siydik tutolmayapti")
+    cauda = _turn(cauda_msgs, cauda_answers, "Ha, ikkala oyoq ham kuchsiz, siydik chiqmayapti")
+    runner.check(
+        "cauda_triggers_emergency",
+        cauda.suggests_emergency or cauda.consultation_state.emergency_status.value == "confirmed",
+        str(cauda.emergency_flags),
     )
 
     # Patient-facing closure must not expose internal topic slugs

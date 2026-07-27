@@ -1,4 +1,4 @@
-"""Phase 3 — Senior Neurologist Clinical Intelligence.
+﻿"""Phase 3 вЂ” Senior Neurologist Clinical Intelligence.
 
 Reason like a senior neurologist; communicate in simple Uzbek for patients.
 """
@@ -17,18 +17,18 @@ PHASE_3_VERSION = "3.1.0"
 
 # Keyword clusters for multi-complaint detection (Uzbek + common variants)
 _COMPLAINT_SIGNALS: dict[ComplaintCategory, tuple[str, ...]] = {
-    "headache": ("bosh og", "boshim og", "bosh og'ri", "bosh og‘ri", "migren", "bosh a", "cephalgia"),
-    "neck_pain": ("bo'yin og", "boyin og", "bo‘yin og", "boynim og", "servikal", "miyoq"),
-    "low_back_pain": ("bel og", "belim og", "belim ham og", "bel og'ri", "bel og‘ri", "orqa og", "lumb", "kamar og"),
+    "headache": ("bosh og", "boshim og", "bosh og'ri", "bosh ogвЂri", "migren", "bosh a", "cephalgia"),
+    "neck_pain": ("bo'yin og", "boyin og", "boвЂyin og", "boynim og", "servikal", "miyoq"),
+    "low_back_pain": ("bel og", "belim og", "belim ham og", "bel og'ri", "bel ogвЂri", "orqa og", "lumb", "kamar og"),
     "vertigo": ("aylan", "bosh aylan", "vertigo", "vertig"),
-    "stroke": ("insult", "falaj", "nutq buz", "qo'lim ishlam", "qo‘lim ishlam", "yuz qimir"),
+    "stroke": ("insult", "falaj", "nutq buz", "qo'lim ishlam", "qoвЂlim ishlam", "yuz qimir"),
     "neuropathy": ("uyuq", "qiynish", "karaxt", "neuropat", "sezgi"),
     "facial_nerve_palsy": ("yuz falaj", "yuz qimir", "bell", "yuzning bir"),
     "tremor": ("titro", "tremor", "qaltir"),
     "memory_problems": ("xotira", "eslay olmay", "unut", "demens"),
     "sleep_disorders": ("uxlamay", "uyqu", "uxlab qol", "insomnia"),
     "anxiety": ("xavotir", "tashvish", "panik", "asabiylash"),
-    "depression": ("depress", "kayfiyat", "havas yo'q", "havas yo‘q"),
+    "depression": ("depress", "kayfiyat", "havas yo'q", "havas yoвЂq"),
 }
 
 
@@ -122,7 +122,7 @@ class ConsultationClosureSummary:
 
 
 def _normalize(text: str) -> str:
-    return text.lower().replace("'", "'").replace("'", "'").replace("‘", "'").replace("’", "'")
+    return text.lower().replace("'", "'").replace("'", "'").replace("вЂ", "'").replace("вЂ™", "'")
 
 
 def detect_complaint_clusters(message: str) -> list[ComplaintCluster]:
@@ -139,14 +139,24 @@ def detect_complaint_clusters(message: str) -> list[ComplaintCluster]:
                     matched_terms=hits,
                 )
             )
-    # Uzbek morphology: "belim ham og'riyapti" — bel and og'ri separated by ham/other words
+    # Uzbek morphology: "belim ham og'riyapti" вЂ” bel and og'ri separated by ham/other words
     if not any(c.category == "low_back_pain" for c in found):
         if re.search(r"bel\w*\s+(?:ham\s+)?og[''']?ri", lowered):
             found.append(
                 ComplaintCluster(
                     category="low_back_pain",
                     label_uz=complaint_label("low_back_pain"),
-                    matched_terms=("bel…og'ri",),
+                    matched_terms=("belвЂ¦og'ri",),
+                )
+            )
+    # Uzbek morphology: "boshim ham og'riyapti" — bosh and og'ri separated by ham/other words
+    if not any(c.category == "headache" for c in found):
+        if re.search(r"bosh\w*\s+(?:ham\s+)?og[''']?ri", lowered):
+            found.append(
+                ComplaintCluster(
+                    category="headache",
+                    label_uz=complaint_label("headache"),
+                    matched_terms=("bosh…og'ri",),
                 )
             )
     return found
@@ -179,7 +189,7 @@ def identify_dominant_complaint(
             dominant_category=hint,
             dominant_label=complaint_label(hint),
             secondary_complaints=[],
-            rationale="Bitta asosiy shikoyat — bemorning hikoyasiga e'tibor qaratiladi.",
+            rationale="Bitta asosiy shikoyat вЂ” bemorning hikoyasiga e'tibor qaratiladi.",
         )
 
     if len(clusters) == 1:
@@ -188,7 +198,7 @@ def identify_dominant_complaint(
             dominant_category=c.category,
             dominant_label=c.label_uz,
             secondary_complaints=[],
-            rationale="Bitta aniq shikoyat aniqlandi — konsultatsiya shu muammoga markazlanadi.",
+            rationale="Bitta aniq shikoyat aniqlandi вЂ” konsultatsiya shu muammoga markazlanadi.",
         )
 
     lowered = _normalize(message)
@@ -201,12 +211,12 @@ def identify_dominant_complaint(
     secondary = [c.label_uz for c in ranked[1:]]
 
     rationale_parts = [
-        f"Asosiy e'tibor '{dominant.label_uz}' ga — xavfsizlik va klinik ahamiyat bo'yicha ustun.",
+        f"Asosiy e'tibor '{dominant.label_uz}' ga вЂ” xavfsizlik va klinik ahamiyat bo'yicha ustun.",
     ]
     if dominant.category == "stroke":
-        rationale_parts.append("O'tkir nevrologik belgilar yoki insult shubhasi — darhol ajratiladi.")
+        rationale_parts.append("O'tkir nevrologik belgilar yoki insult shubhasi вЂ” darhol ajratiladi.")
     elif dominant.category == "headache" and any(w in lowered for w in ("birdan", "eng kuchli")):
-        rationale_parts.append("Birdan boshlangan kuchli bosh og'rig'i — xavfli sabablarni istisno qilish kerak.")
+        rationale_parts.append("Birdan boshlangan kuchli bosh og'rig'i вЂ” xavfli sabablarni istisno qilish kerak.")
     if secondary:
         rationale_parts.append(f"Qo'shimcha shikoyatlar keyinroq baholanadi: {', '.join(secondary)}.")
 
@@ -221,13 +231,13 @@ def identify_dominant_complaint(
 def format_communication_style_block() -> str:
     """Patient-facing communication rules for every turn."""
     return """COMMUNICATION STYLE (every patient turn):
-• Speak SIMPLE Uzbek — words ordinary patients understand.
-• Be warm, professional, respectful, and natural — like Doctor Boysunov in a real clinic.
-• Never sound robotic, templated, or like ChatGPT.
-• Never ask duplicate questions — honor known_facts, topics_covered, and the full conversation.
-• Remember previous answers; synthesize before asking anything new.
-• Ask only the MINIMUM number of questions necessary for a safe, useful clinical conclusion.
-• Think, analyze, synthesize internally — then communicate clearly and humanly."""
+вЂў Speak SIMPLE Uzbek вЂ” words ordinary patients understand.
+вЂў Be warm, professional, respectful, and natural вЂ” like Doctor Boysunov in a real clinic.
+вЂў Never sound robotic, templated, or like ChatGPT.
+вЂў Never ask duplicate questions вЂ” honor known_facts, topics_covered, and the full conversation.
+вЂў Remember previous answers; synthesize before asking anything new.
+вЂў Ask only the MINIMUM number of questions necessary for a safe, useful clinical conclusion.
+вЂў Think, analyze, synthesize internally вЂ” then communicate clearly and humanly."""
 
 
 def format_consultation_ending_rules() -> str:
@@ -236,38 +246,38 @@ def format_consultation_ending_rules() -> str:
 Populate consultation_closure with ALL fields:
   chief_complaint, clinical_summary, associated_symptoms, neurological_syndrome,
   most_likely_diagnosis, differential_diagnosis (ranked list), red_flags,
-  recommended_investigations, treatment_strategy (general approach ONLY — no drug names/doses),
+  recommended_investigations, treatment_strategy (general approach ONLY вЂ” no drug names/doses),
   next_step, urgent_referral_required, urgent_referral_reason.
 
-CONSULTATION ENDING — patient_reply tone:
+CONSULTATION ENDING вЂ” patient_reply tone:
 
 If NOT urgent (urgent_referral_required=false):
-• End politely and warmly. Include booking offer similar to:
+вЂў End politely and warmly. Include booking offer similar to:
   "Rahmat. Siz bergan ma'lumotlarga asoslanib dastlabki klinik xulosa tayyorlandi.
   Aniq tashxis va individual davolash rejasini tuzish uchun nevrolog ko'rigi muhim.
   Agar xohlasangiz, Doctor Boysunov bilan onlayn videokonsultatsiya yoki klinikadagi oflayn qabul uchun yozilishingiz mumkin.
   Sizga qaysi variant qulay bo'lsa, yozilishingizga yordam beraman."
 
 If EMERGENCY (urgent_referral_required=true OR step4_emergency_assessment=urgent|emergency):
-• Do NOT recommend online consultation or routine appointment booking.
-• Immediately recommend emergency medical evaluation (103 / tez yordam or nearest shoshilinch yordam).
-• Safety first — urgent, clear, compassionate tone."""
+вЂў Do NOT recommend online consultation or routine appointment booking.
+вЂў Immediately recommend emergency medical evaluation (103 / tez yordam or nearest shoshilinch yordam).
+вЂў Safety first вЂ” urgent, clear, compassionate tone."""
 
 
 def format_senior_neurologist_principles() -> str:
     """Core Phase 3 principles injected into GPT instructions."""
     return """SENIOR NEUROLOGIST CLINICAL INTELLIGENCE (Phase 3):
-• Think like Doctor Boysunov during a real clinic consultation — NOT ChatGPT, NOT a generic chatbot, NOT an intake form.
-• FIRST understand the patient's main complaint from their own words before asking anything.
-• ALWAYS prioritize dangerous neurological conditions (stroke, SAH, cauda equina, central vertigo, status epilepticus, meningitis) BEFORE routine history.
-• Ask ONLY the single highest-value question that would change differential or urgency — never low-yield or repeated questions.
-• Use explicit differential diagnosis reasoning; re-rank probabilities after EVERY new answer.
-• If multiple complaints exist, identify the DOMINANT complaint, explain why it leads, defer secondary complaints.
-• Adapt dynamically to age, medications, pregnancy, chronic disease, and every prior answer in this session.
-• Keep full consultation memory — never re-ask facts in known_facts, topics_covered, or conversation history.
-• Communicate with the patient in SIMPLE Uzbek (2–4 short sentences). Internal reasoning stays clinical and precise.
-• NEVER prescribe medications or dosages automatically. treatment_strategy = general approach pending in-person examination.
-• At closure (step7_ready_for_summary=true), fill consultation_closure completely and end with the appropriate urgency-based closing."""
+вЂў Think like Doctor Boysunov during a real clinic consultation вЂ” NOT ChatGPT, NOT a generic chatbot, NOT an intake form.
+вЂў FIRST understand the patient's main complaint from their own words before asking anything.
+вЂў ALWAYS prioritize dangerous neurological conditions (stroke, SAH, cauda equina, central vertigo, status epilepticus, meningitis) BEFORE routine history.
+вЂў Ask ONLY the single highest-value question that would change differential or urgency вЂ” never low-yield or repeated questions.
+вЂў Use explicit differential diagnosis reasoning; re-rank probabilities after EVERY new answer.
+вЂў If multiple complaints exist, identify the DOMINANT complaint, explain why it leads, defer secondary complaints.
+вЂў Adapt dynamically to age, medications, pregnancy, chronic disease, and every prior answer in this session.
+вЂў Keep full consultation memory вЂ” never re-ask facts in known_facts, topics_covered, or conversation history.
+вЂў Communicate with the patient in SIMPLE Uzbek (2вЂ“4 short sentences). Internal reasoning stays clinical and precise.
+вЂў NEVER prescribe medications or dosages automatically. treatment_strategy = general approach pending in-person examination.
+вЂў At closure (step7_ready_for_summary=true), fill consultation_closure completely and end with the appropriate urgency-based closing."""
 
 
 def format_dominant_complaint_block(analysis: DominantComplaintAnalysis | None) -> str:
@@ -275,18 +285,18 @@ def format_dominant_complaint_block(analysis: DominantComplaintAnalysis | None) 
         return ""
     lines = [
         "DOMINANT COMPLAINT ANALYSIS (use for this turn):",
-        f"• Dominant: {analysis.dominant_label} ({analysis.dominant_category})",
+        f"вЂў Dominant: {analysis.dominant_label} ({analysis.dominant_category})",
     ]
     if analysis.secondary_complaints:
-        lines.append(f"• Secondary (defer until dominant addressed): {', '.join(analysis.secondary_complaints)}")
-    lines.append(f"• Why dominant leads: {analysis.rationale}")
+        lines.append(f"вЂў Secondary (defer until dominant addressed): {', '.join(analysis.secondary_complaints)}")
+    lines.append(f"вЂў Why dominant leads: {analysis.rationale}")
     return "\n".join(lines)
 
 
 def _urgency_from_assessment(assessment: str, red_flags: list[str]) -> tuple[bool, str]:
     lowered = (assessment or "").lower()
     if lowered in {"emergency", "urgent", "shoshilinch", "103"} or red_flags:
-        reason = "Qizil bayroqlar yoki favqulodda baho — zudlik bilan shifokor ko'rigi kerak."
+        reason = "Qizil bayroqlar yoki favqulodda baho вЂ” zudlik bilan shifokor ko'rigi kerak."
         if any("103" in f.lower() or "tez yordam" in f.lower() for f in red_flags):
             reason = "103/TEZ yordam va shoshilinch nevrologik baholash kerak."
         return True, reason
@@ -301,7 +311,7 @@ def _default_next_step(urgent: bool, assessment: str) -> str:
 
 def _default_treatment_strategy(urgent: bool) -> str:
     if urgent:
-        return "Shoshilinch tibbiy baholash — davolash rejasi shifokor ko'rigidan keyin."
+        return "Shoshilinch tibbiy baholash вЂ” davolash rejasi shifokor ko'rigidan keyin."
     return "Aniq tashxis va individual davolash rejasi nevrolog ko'rigidan keyin belgilanadi."
 
 
@@ -375,25 +385,25 @@ def build_closure_summary(
 
 
 def format_routine_consultation_ending() -> str:
-    """Polite non-urgent closure — Doctor Boysunov booking offer."""
+    """Polite non-urgent closure вЂ” Doctor Boysunov booking offer."""
     return (
         "Rahmat. Siz bergan ma'lumotlarga asoslanib dastlabki klinik xulosa tayyorlandi.\n\n"
         "Aniq tashxis va individual davolash rejasini tuzish uchun nevrolog ko'rigi muhim.\n\n"
         "Agar xohlasangiz, Doctor Boysunov bilan:\n"
-        "• Onlayn videokonsultatsiya\n"
+        "вЂў Onlayn videokonsultatsiya\n"
         "yoki\n"
-        "• Klinikadagi oflayn qabul\n"
+        "вЂў Klinikadagi oflayn qabul\n"
         "uchun yozilishingiz mumkin.\n\n"
         "Sizga qaysi variant qulay bo'lsa, yozilishingizga yordam beraman."
     )
 
 
 def format_emergency_consultation_ending(closure: ConsultationClosureSummary) -> str:
-    """Emergency closure — no online booking."""
+    """Emergency closure вЂ” no online booking."""
     reason = closure.urgent_referral_reason or "Holatingiz shoshilinch tibbiy baholashni talab qilishi mumkin."
     return (
-        f"⚠️ {reason}\n\n"
-        "Iltimos, onlayn konsultatsiyani kechiktirmang — darhol 103 yoki eng yaqin shoshilinch yordamga murojaat qiling.\n"
+        f"вљ пёЏ {reason}\n\n"
+        "Iltimos, onlayn konsultatsiyani kechiktirmang вЂ” darhol 103 yoki eng yaqin shoshilinch yordamga murojaat qiling.\n"
         "Shoshilinch holatda onlayn yozilish tavsiya etilmaydi."
     )
 
@@ -403,26 +413,26 @@ def format_patient_closure_summary(closure: ConsultationClosureSummary) -> str:
     lines: list[str] = []
 
     if closure.chief_complaint:
-        lines.append(f"📋 Asosiy shikoyat: {closure.chief_complaint}")
+        lines.append(f"рџ“‹ Asosiy shikoyat: {closure.chief_complaint}")
     if closure.clinical_summary:
-        lines.append(f"📋 Klinik xulosa: {closure.clinical_summary}")
+        lines.append(f"рџ“‹ Klinik xulosa: {closure.clinical_summary}")
     if closure.associated_symptoms:
-        lines.append(f"📋 Qo'shimcha belgilar: {', '.join(closure.associated_symptoms[:5])}.")
+        lines.append(f"рџ“‹ Qo'shimcha belgilar: {', '.join(closure.associated_symptoms[:5])}.")
     if closure.neurological_syndrome:
-        lines.append(f"📋 Nevrologik sindrom: {closure.neurological_syndrome}")
+        lines.append(f"рџ“‹ Nevrologik sindrom: {closure.neurological_syndrome}")
     if closure.most_likely_diagnosis:
-        lines.append(f"🔍 Eng ehtimoliy sabab (aniq tashxis emas): {closure.most_likely_diagnosis}.")
+        lines.append(f"рџ”Ќ Eng ehtimoliy sabab (aniq tashxis emas): {closure.most_likely_diagnosis}.")
     dx = closure.differential_diagnosis or closure.ranked_diagnoses
     if dx:
-        lines.append(f"🔍 Boshqa ehtimoliy sabablar: {'; '.join(dx[:4])}.")
+        lines.append(f"рџ”Ќ Boshqa ehtimoliy sabablar: {'; '.join(dx[:4])}.")
     if closure.red_flags:
-        lines.append(f"⚠️ Diqqat — qizil bayroqlar: {', '.join(closure.red_flags[:3])}.")
+        lines.append(f"вљ пёЏ Diqqat вЂ” qizil bayroqlar: {', '.join(closure.red_flags[:3])}.")
     if closure.recommended_investigations:
-        lines.append(f"🔬 Tavsiya etilgan tekshiruvlar: {', '.join(closure.recommended_investigations[:4])}.")
+        lines.append(f"рџ”¬ Tavsiya etilgan tekshiruvlar: {', '.join(closure.recommended_investigations[:4])}.")
     if closure.treatment_strategy:
-        lines.append(f"💊 Davolash yo'nalishi: {closure.treatment_strategy}")
+        lines.append(f"рџ’Љ Davolash yo'nalishi: {closure.treatment_strategy}")
     if closure.recommended_next_step:
-        lines.append(f"➡️ Keyingi qadam: {closure.recommended_next_step}")
+        lines.append(f"вћЎпёЏ Keyingi qadam: {closure.recommended_next_step}")
 
     summary_block = "\n".join(lines)
     if closure.urgent_referral_required:
@@ -476,7 +486,7 @@ def merge_closure_from_response(
 def format_closure_emr_block(closure: ConsultationClosureSummary) -> str:
     lines = [
         "--- Senior Neurologist Closure (Phase 3) ---",
-        f"Asosiy shikoyat: {closure.chief_complaint or '—'}",
+        f"Asosiy shikoyat: {closure.chief_complaint or 'вЂ”'}",
         f"Klinik xulosa: {closure.clinical_summary}",
     ]
     if closure.associated_symptoms:

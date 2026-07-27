@@ -7,7 +7,8 @@ from typing import Any
 
 from app.clinical_brain.clinical_pathways import get_pathway, recognize_pathway
 from app.clinical_brain.senior_neurologist import identify_dominant_complaint
-from app.consultation_intelligence.answer_parser import is_negative, is_positive
+from app.consultation_intelligence.answer_parser import is_positive
+from app.consultation_intelligence.emergency import evaluate_emergency_from_facts
 from app.consultation_intelligence.state import ConsultationState, EmergencyStatus
 from app.domain.consultation import ComplaintCategory
 
@@ -37,14 +38,17 @@ def _build_differential(pathway_id: str, facts: dict[str, str]) -> list[dict[str
 
     if facts:
         for slug, val in facts.items():
+            val_lower = (val or "").lower()
             if "cauda" in slug and is_positive(val):
-                for item in ranked:
-                    if "cauda" in item["name"].lower():
-                        item["probability_pct"] = min(95.0, item["probability_pct"] + 30)
+                if any(w in val_lower for w in ("ikki", "siydik", "najas", "hojat")):
+                    for item in ranked:
+                        if "cauda" in item["name"].lower():
+                            item["probability_pct"] = min(95.0, item["probability_pct"] + 30)
             if "central" in slug and is_positive(val):
-                for item in ranked:
-                    if "insult" in item["name"].lower() or "markaziy" in item["name"].lower():
-                        item["probability_pct"] = min(95.0, item["probability_pct"] + 25)
+                if any(w in val_lower for w in ("nutq", "yuz", "qo'l", "insult", "birdan")):
+                    for item in ranked:
+                        if "insult" in item["name"].lower() or "markaziy" in item["name"].lower():
+                            item["probability_pct"] = min(95.0, item["probability_pct"] + 25)
 
     ranked.sort(key=lambda x: x["probability_pct"], reverse=True)
     for i, item in enumerate(ranked):
@@ -53,24 +57,7 @@ def _build_differential(pathway_id: str, facts: dict[str, str]) -> list[dict[str
 
 
 def _evaluate_emergency(state: ConsultationState, facts: dict[str, str]) -> tuple[EmergencyStatus, list[str]]:
-    confirmed: list[str] = []
-    for slug, val in facts.items():
-        if ("triage" in slug or "screen" in slug or "snoop" in slug) and is_positive(val):
-            if "cauda" in slug or "stroke" in slug or "central" in slug or "seizure" in slug:
-                confirmed.append(slug)
-        if "stroke" in slug or "insult" in slug:
-            if is_positive(val):
-                confirmed.append("stroke_screen_positive")
-
-    opening = (state.opening_complaint or "").lower()
-    if any(w in opening for w in ("hushdan ket", "103", "nutq buzildi", "qo'lim ishlamay qoldi")):
-        confirmed.append("acute_presentation_opening")
-
-    if confirmed:
-        return EmergencyStatus.CONFIRMED, confirmed
-    if state.emergency_suspect_flags:
-        return EmergencyStatus.SUSPECTED, list(state.confirmed_red_flags)
-    return EmergencyStatus.NONE, []
+    return evaluate_emergency_from_facts(state, facts)
 
 
 class ClinicalReasoner:

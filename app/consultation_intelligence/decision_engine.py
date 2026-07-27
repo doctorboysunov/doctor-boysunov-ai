@@ -22,6 +22,16 @@ def _dependencies_met(node: PathwayNode, answered: set[str]) -> bool:
     return all(dep in answered for dep in node.depends_on)
 
 
+def _select_supplemental_node(state: ConsultationState) -> tuple[str, str, str] | None:
+    """Return (topic_slug, question_text, source_label) for next supplemental question."""
+    answered = set(state.answered_slugs)
+    for q in state.supplemental_questions:
+        slug = str(q.get("topic_slug") or "")
+        if slug and slug not in answered:
+            return slug, str(q.get("question_text") or ""), str(q.get("source_label") or "")
+    return None
+
+
 def _select_next_node(pathway_id: str, answered: set[str]) -> PathwayNode | None:
     pathway = get_pathway(pathway_id)
     if not pathway:
@@ -69,6 +79,17 @@ class DecisionEngine:
             return ClinicalDecision(
                 action="closure",
                 rationale="Pathway minimum clinical information collected.",
+                missing_information=pending,
+            )
+
+        supp = _select_supplemental_node(state)
+        if supp:
+            slug, text, source = supp
+            return ClinicalDecision(
+                action="ask",
+                topic_slug=slug,
+                question_text=text,
+                rationale=f"New symptom follow-up ({source}).",
                 missing_information=pending,
             )
 
