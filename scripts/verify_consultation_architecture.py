@@ -151,6 +151,66 @@ def main() -> None:
         vague.consultation_state.syndrome_label_uz,
     )
 
+    # Full pathway — must not close before all required nodes are answered
+    from app.clinical_brain.clinical_pathways import get_pathway
+
+    spine_answers: dict = {}
+    spine_msgs: list[dict[str, str]] = []
+    spine_open = "Belim og'riyapti"
+    sr = _turn(spine_msgs, spine_answers, spine_open)
+    pathway = get_pathway(sr.consultation_state.pathway_id)
+    required_nodes = [n for n in pathway.nodes if n.required] if pathway else []
+    for i in range(max(len(required_nodes) - 1, 1)):
+        if sr.ready_for_help_menu:
+            break
+        ans = f"3 kun oldin, javob {i}"
+        sr = _turn(spine_msgs, spine_answers, ans)
+    runner.check(
+        "no_early_closure",
+        not sr.ready_for_help_menu,
+        f"answered={sr.consultation_state.answered_slugs}",
+    )
+
+    # Advice question during collecting — continue consultation, not help menu
+    adv_answers: dict = {}
+    adv_msgs: list[dict[str, str]] = []
+    _turn(adv_msgs, adv_answers, leg)
+    adv = _turn(adv_msgs, adv_answers, "Nima qilsam bo'ladi?")
+    runner.check(
+        "advice_no_help_menu",
+        "Keyingi qadamda sizga qanday yordam beray?" not in adv.patient_reply,
+        adv.patient_reply[:120],
+    )
+    runner.check(
+        "advice_continues_consultation",
+        "davolash" in adv.patient_reply.lower() or "davom" in adv.patient_reply.lower(),
+        adv.patient_reply[:120],
+    )
+
+    # Patient-facing closure must not expose internal topic slugs
+    slug_answers: dict = {}
+    slug_msgs: list[dict[str, str]] = []
+    slug_state = ConsultationState.load({})
+    slug_state.pathway_id = "lumbar_spine"
+    slug_state.pathway_locked = True
+    slug_state.syndrome_label_uz = "Lumbal umurtqa pog'onasi sindromi"
+    slug_state.dominant_complaint = "Bel og'rig'i"
+    slug_state.opening_complaint = "Belim og'riyapti"
+    slug_state.record_answer("opening_complaint", "Belim og'riyapti", "Belim og'riyapti")
+    for node in get_pathway("lumbar_spine").nodes:
+        slug_state.record_answer(node.topic_slug, "ha", "ha")
+    slug_state.persist_into(slug_answers)
+    slug_closed = process_consultation_intelligence_turn(
+        user_message="tayyor",
+        session_messages=[{"role": "user", "content": "tayyor"}],
+        answers=slug_answers,
+    )
+    runner.check(
+        "no_internal_slug_in_reply",
+        "lumbar_spine" not in slug_closed.patient_reply.lower(),
+        slug_closed.patient_reply[:200],
+    )
+
     print()
     print("=" * 72)
     print(f"CONSULTATION ARCHITECTURE v6: {runner.passed}/{runner.total} tests passed")

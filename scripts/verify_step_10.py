@@ -299,7 +299,8 @@ def main() -> None:
                     process_consultation_turn(pid2, "Belim og'riyapti", user_data=ud2)
                     process_consultation_turn(pid2, "1 hafta", user_data=ud2)
                     online_turn = process_consultation_turn(pid2, "Onlayn konsultatsiya", user_data=ud2)
-        runner.eq("online_choice_complete", online_turn.phase, "complete")
+        runner.eq("online_choice_keeps_session", online_turn.phase, "collecting")
+        runner.check("online_session_active", get_active_session(pid2) is not None, repr(get_active_session(pid2)))
         runner.check("online_reply_short", _sentence_count(online_turn.reply) <= 4, online_turn.reply)
 
     async def _chat_integration() -> str | None:

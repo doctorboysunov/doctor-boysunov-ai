@@ -27,6 +27,8 @@ from app.services.consultation_ai import (
     run_conversation_intent_analysis,  # deprecated in v6 routing; kept for test mocks
 )
 run_neurology_turn = run_intelligence_turn  # production: code-driven consultation engine v6
+from app.consultation_intelligence.message_intent import is_advice_question
+from app.consultation_intelligence.state import ConsultationState
 from app.clinical_brain.clinical_pathways.recognition import resolve_complaint_category
 from app.services.consultation_classifier import classify_complaint, complaint_label
 from app.medical_brain.router import is_medical_consultation_trigger, route_medical_specialties
@@ -470,6 +472,9 @@ def _continue_session(
         state["session_messages"].append({"role": "assistant", "content": reply})
         summary = dict(gpt.session_summary)
         summary["patient_summary"] = gpt.brief_summary_for_patient
+        cs = ConsultationState.load(state["known_facts"])
+        cs.help_menu_shown = True
+        cs.persist_into(state["known_facts"])
         update_session(
             session.id,
             phase="awaiting_help_choice",
@@ -518,42 +523,28 @@ def _handle_help_choice(
     state = _session_state(session.answers)
     state["session_messages"].append({"role": "user", "content": text})
 
+    if choice is None and is_advice_question(text):
+        update_session(
+            session.id,
+            phase="collecting",
+            answers=_merge_state(session.answers, state),
+        )
+        return _continue_session(session, text, user_data=user_data, state=state)
+
     if choice == "continue":
+        state["session_messages"].pop()
         state["help_choice"] = "continue"
         update_session(
             session.id,
             phase="collecting",
             answers=_merge_state(session.answers, state),
         )
-        gpt = run_neurology_turn(
-            category=session.complaint_category,
-            user_message=text,
-            session_messages=state["session_messages"],
-            known_facts=state["known_facts"],
-            topics_covered=state["topics_covered"],
-            prior_complaints=_prior_complaints(session.patient_id),
-            patient_id=session.patient_id,
-            visit_history=get_visit_history(session.patient_id),
-            append_disclaimer=False,
-            primary_specialty=state.get("primary_specialty"),
-            secondary_specialties=state.get("secondary_specialties"),
-        )
-        reply = gpt.patient_reply
-        state["session_messages"].append({"role": "assistant", "content": reply})
-        state["known_facts"].update(gpt.known_facts)
-        state["topics_covered"] = _merge_topics(state["topics_covered"], gpt.topics_covered)
-        state["primary_specialty"] = gpt.primary_specialty
-        state["secondary_specialties"] = gpt.secondary_specialties
-        update_session(
-            session.id,
-            answers=_merge_state(session.answers, state),
-            asked_question_ids=state["topics_covered"],
-        )
-        return ConsultationTurnResult(
-            reply=reply,
-            phase="collecting",
-            session_id=session.id,
-            used_consultation_engine=True,
+        resume_text = _last_non_greeting_user_message(state["session_messages"]) or ""
+        return _continue_session(
+            session,
+            resume_text or "davom etamiz",
+            user_data=user_data,
+            state=state,
         )
 
     if choice in {"online", "clinic"}:
@@ -564,21 +555,24 @@ def _handle_help_choice(
             session_messages=state["session_messages"],
             known_facts=state["known_facts"],
         )
+        cs = ConsultationState.load(state["known_facts"])
+        cs.help_menu_shown = True
+        cs.persist_into(state["known_facts"])
+        state["known_facts"] = dict(state["known_facts"])
         state["session_messages"].append({"role": "assistant", "content": reply})
         update_session(
             session.id,
-            phase="complete",
+            phase="collecting",
             answers=_merge_state(session.answers, state),
             summary=session.summary,
         )
         if user_data is not None:
-            user_data.pop(CONSULTATION_SESSION_KEY, None)
+            user_data[CONSULTATION_SESSION_KEY] = session.id
         return ConsultationTurnResult(
             reply=reply,
-            phase="complete",
+            phase="collecting",
             session_id=session.id,
             used_consultation_engine=True,
-            completed=True,
         )
 
     reply = f"Iltimos, tanlang:\n{HELP_MENU_TEXT}"

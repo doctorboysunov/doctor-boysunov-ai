@@ -45,7 +45,7 @@ def _pathway_progress(pathway_id: str, answered: set[str]) -> tuple[float, bool,
     pct = len(completed) / max(len(required), 1) * 100.0
     triage_slugs = {n.topic_slug for n in pathway.nodes if n.phase == "triage"}
     triage_done = bool(triage_slugs & answered) or not triage_slugs
-    ready = len(completed) >= pathway.min_required_topics and triage_done
+    ready = len(pending) == 0 and triage_done
     return pct, ready, pending
 
 

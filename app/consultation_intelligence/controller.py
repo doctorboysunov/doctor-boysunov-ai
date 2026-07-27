@@ -15,6 +15,7 @@ from app.consultation_intelligence.emergency import (
     is_confirmed_emergency,
     update_emergency_from_pending_answer,
 )
+from app.consultation_intelligence.message_intent import is_advice_question
 from app.consultation_intelligence.response_generator import ResponseGenerator
 from app.consultation_intelligence.state import ConsultationStage, ConsultationState, ENGINE_VERSION
 
@@ -53,6 +54,15 @@ def _wants_new_complaint(text: str) -> bool:
     return any(p in lowered for p in ("yangi muammo", "boshqa shikoyat", "restart", "boshqadan"))
 
 
+def _pending_question_text(state: ConsultationState) -> str:
+    if not state.pending_topic:
+        return ""
+    for asked in reversed(state.asked):
+        if asked.topic_slug == state.pending_topic:
+            return asked.question_text
+    return ""
+
+
 class ConsultationController:
     """Single controller: state → reason → decide → respond."""
 
@@ -72,12 +82,7 @@ class ConsultationController:
         result = ControllerTurnResult(consultation_state=state)
 
         if _is_greeting_only(user_message) and state.pathway_locked:
-            pending_q = ""
-            if state.pending_topic and state.asked:
-                for a in reversed(state.asked):
-                    if a.topic_slug == state.pending_topic:
-                        pending_q = a.question_text
-                        break
+            pending_q = _pending_question_text(state)
             result.patient_reply = self._responses.greeting_resume(pending_q or None)
             state.persist_into(answers)
             result.consultation_state = state
@@ -85,6 +90,13 @@ class ConsultationController:
 
         if _wants_new_complaint(user_message):
             result.patient_reply = self._responses.topic_clarification()
+            state.persist_into(answers)
+            result.consultation_state = state
+            return result
+
+        if is_advice_question(user_message) and state.pathway_locked:
+            pending_q = _pending_question_text(state)
+            result.patient_reply = self._responses.advice_during_consultation(state, pending_q or None)
             state.persist_into(answers)
             result.consultation_state = state
             return result
@@ -130,14 +142,19 @@ class ConsultationController:
             return result
 
         if decision.action == "closure":
-            state.stage = ConsultationStage.CLOSURE
-            result.patient_reply = self._responses.closure(state)
-            result.ready_for_help_menu = True
-            result.brief_summary_for_patient = (
-                f"{state.syndrome_label_uz}: {state.dominant_complaint}"[:300]
-            )
-            result.session_summary = self._responses.to_closure_summary(state)
-            state.stage = ConsultationStage.AWAITING_HELP
+            if state.help_menu_shown:
+                result.patient_reply = self._responses.continue_after_help_action(state)
+                state.stage = ConsultationStage.COLLECTING
+            else:
+                state.stage = ConsultationStage.CLOSURE
+                result.patient_reply = self._responses.closure(state)
+                result.ready_for_help_menu = True
+                result.brief_summary_for_patient = (
+                    f"{state.syndrome_label_uz}: {state.dominant_complaint}"[:300]
+                )
+                result.session_summary = self._responses.to_closure_summary(state)
+                state.help_menu_shown = True
+                state.stage = ConsultationStage.AWAITING_HELP
         else:
             state.record_question(decision.topic_slug, decision.question_text)
             if state.turn_count == 1 or len(state.answered_slugs) <= 1:
@@ -151,9 +168,13 @@ class ConsultationController:
         return result
 
     def _emr(self, state: ConsultationState) -> dict[str, Any]:
+        from app.consultation_intelligence.patient_labels import format_fact_for_patient
+
         doctor = DoctorEmrUpdate(
             chief_complaint=state.dominant_complaint or state.opening_complaint,
-            history="; ".join(f"{f.topic_slug}={f.parsed_value}" for f in state.facts[:8]),
+            history="; ".join(
+                format_fact_for_patient(state, f) for f in state.facts[:8] if f.topic_slug != "opening_complaint"
+            ),
             clinical_notes=state.recognition_rationale,
             differential_diagnoses=[d["name"] for d in state.differential[:6]],
             urgency="urgent" if state.confirmed_red_flags else "routine",

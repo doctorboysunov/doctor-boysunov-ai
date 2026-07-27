@@ -78,6 +78,7 @@ class ConsultationState:
 
     completion_pct: float = 0.0
     ready_for_closure: bool = False
+    help_menu_shown: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -103,6 +104,7 @@ class ConsultationState:
             "emergency_suspect_flags": list(self.emergency_suspect_flags),
             "completion_pct": self.completion_pct,
             "ready_for_closure": self.ready_for_closure,
+            "help_menu_shown": self.help_menu_shown,
         }
 
     @classmethod
@@ -159,6 +161,7 @@ class ConsultationState:
             emergency_suspect_flags=[str(x) for x in (data.get("emergency_suspect_flags") or []) if str(x).strip()],
             completion_pct=float(data.get("completion_pct") or 0),
             ready_for_closure=bool(data.get("ready_for_closure")),
+            help_menu_shown=bool(data.get("help_menu_shown")),
         )
 
     @classmethod

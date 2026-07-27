@@ -9,6 +9,7 @@ from app.clinical_brain.senior_neurologist import (
 )
 from app.clinical_brain.types import ClinicalBrainInternal, DoctorEmrUpdate, RankedHypothesis
 from app.consultation_intelligence.decision_engine import ClinicalDecision
+from app.consultation_intelligence.patient_labels import format_fact_for_patient
 from app.consultation_intelligence.state import ConsultationState
 
 
@@ -36,6 +37,25 @@ class ResponseGenerator:
             "Yangi muammo haqida gapiryapsizmi? "
             "Agar shunday bo'lsa, aniq yozing: «yangi muammo». "
             "Aks holda joriy konsultatsiyani davom ettiramiz."
+        )
+
+    def advice_during_consultation(self, state: ConsultationState, pending_question: str | None) -> str:
+        intro = (
+            "Hozircha aniq davolash rejasini aytolmayman — avval muhim savollarga javob olishim kerak. "
+            "To'liq ma'lumotdan keyin shifokor aniq yo'l ko'rsatadi."
+        )
+        if pending_question:
+            q = pending_question.rstrip("?")
+            return f"{intro}\n\nDavom etamiz: {q}?"
+        if state.missing_information:
+            return f"{intro}\n\nAgar qo'shimcha belgi bo'lsa, yozing — konsultatsiyani davom ettiramiz."
+        return intro
+
+    def continue_after_help_action(self, state: ConsultationState) -> str:
+        return (
+            "Konsultatsiyamiz davom etmoqda — oldingi ma'lumotlaringiz saqlangan. "
+            "Agar qo'shimcha savol yoki yangi belgi bo'lsa, yozing. "
+            "Shifokor ko'rigida aniq reja tuziladi."
         )
 
     def first_question(self, state: ConsultationState, decision: ClinicalDecision) -> str:
@@ -73,10 +93,14 @@ class ResponseGenerator:
         )
         closure.chief_complaint = state.dominant_complaint
         closure.neurological_syndrome = state.syndrome_label_uz
+        fact_lines = [
+            format_fact_for_patient(state, fact)
+            for fact in state.facts
+            if fact.topic_slug != "opening_complaint"
+        ]
+        fact_lines = [line for line in fact_lines if line]
         parts = [f"Asosiy shikoyat: {state.dominant_complaint}. Faol sindrom: {state.syndrome_label_uz}."]
-        for fact in state.facts:
-            if fact.topic_slug != "opening_complaint":
-                parts.append(f"{fact.topic_slug}: {fact.parsed_value[:80]}")
+        parts.extend(fact_lines[:5])
         closure.clinical_summary = " ".join(parts[:6])
         if state.differential:
             closure.most_likely_diagnosis = state.differential[0]["name"]
