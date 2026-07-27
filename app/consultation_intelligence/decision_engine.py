@@ -1,11 +1,13 @@
-"""DecisionEngine — select the single best next clinical question."""
+"""DecisionEngine — evidence-driven question selection and pre-closure verification."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from app.clinical_brain.clinical_pathways import get_pathway
-from app.clinical_brain.clinical_pathways.types import PathwayNode
+from app.consultation_intelligence.closure_verifier import assess_closure_readiness
+from app.consultation_intelligence.contradiction_detector import detect_contradictions
+from app.consultation_intelligence.question_selector import select_best_node
 from app.consultation_intelligence.state import ConsultationState, EmergencyStatus
 
 
@@ -15,15 +17,11 @@ class ClinicalDecision:
     topic_slug: str = ""
     question_text: str = ""
     rationale: str = ""
+    diagnostic_purpose: str = ""
     missing_information: list[str] | None = None
 
 
-def _dependencies_met(node: PathwayNode, answered: set[str]) -> bool:
-    return all(dep in answered for dep in node.depends_on)
-
-
 def _select_supplemental_node(state: ConsultationState) -> tuple[str, str, str] | None:
-    """Return (topic_slug, question_text, source_label) for next supplemental question."""
     answered = set(state.answered_slugs)
     for q in state.supplemental_questions:
         slug = str(q.get("topic_slug") or "")
@@ -32,35 +30,29 @@ def _select_supplemental_node(state: ConsultationState) -> tuple[str, str, str] 
     return None
 
 
-def _select_next_node(pathway_id: str, answered: set[str]) -> PathwayNode | None:
+def _pathway_progress(pathway_id: str, answered: set[str]) -> tuple[float, list[str]]:
     pathway = get_pathway(pathway_id)
     if not pathway:
-        return None
-    for node in pathway.nodes:
-        if node.topic_slug in answered:
-            continue
-        if not _dependencies_met(node, answered):
-            continue
-        return node
-    return None
-
-
-def _pathway_progress(pathway_id: str, answered: set[str]) -> tuple[float, bool, list[str]]:
-    pathway = get_pathway(pathway_id)
-    if not pathway:
-        return 0.0, False, []
+        return 0.0, []
     required = [n for n in pathway.nodes if n.required]
     completed = [n for n in required if n.topic_slug in answered]
     pending = [n.topic_slug for n in required if n.topic_slug not in answered]
     pct = len(completed) / max(len(required), 1) * 100.0
-    triage_slugs = {n.topic_slug for n in pathway.nodes if n.phase == "triage"}
-    triage_done = bool(triage_slugs & answered) or not triage_slugs
-    ready = len(pending) == 0 and triage_done
-    return pct, ready, pending
+    return pct, pending
+
+
+def _node_for_slug(pathway_id: str, slug: str):
+    pathway = get_pathway(pathway_id)
+    if not pathway:
+        return None
+    for node in pathway.nodes:
+        if node.topic_slug == slug:
+            return node
+    return None
 
 
 class DecisionEngine:
-    """Choose exactly one next action based on state and reasoning."""
+    """Choose next action only when evidence supports closure — otherwise keep collecting."""
 
     def decide(self, state: ConsultationState) -> ClinicalDecision:
         if state.emergency_status == EmergencyStatus.CONFIRMED:
@@ -70,16 +62,52 @@ class DecisionEngine:
             )
 
         answered = set(state.answered_slugs)
-        pct, ready, pending = _pathway_progress(state.pathway_id, answered)
+        pct, pending = _pathway_progress(state.pathway_id, answered)
         state.completion_pct = pct
         state.missing_information = pending
-        state.ready_for_closure = ready
 
-        if ready:
+        readiness = assess_closure_readiness(state)
+        state.ready_for_closure = readiness.ready
+
+        if readiness.ready:
             return ClinicalDecision(
                 action="closure",
-                rationale="Pathway minimum clinical information collected.",
-                missing_information=pending,
+                rationale=(
+                    "Evidence sufficient: mandatory questions complete, red flags checked, "
+                    "alternatives reasonably excluded, differential confidently distinguished."
+                ),
+                missing_information=[],
+            )
+
+        remaining = list(readiness.remaining_topics)
+
+        pending_clar = state.pending_clarification
+        if pending_clar:
+            slug = str(pending_clar.get("topic_slug") or "")
+            if slug and slug not in answered:
+                return ClinicalDecision(
+                    action="ask",
+                    topic_slug=slug,
+                    question_text=str(pending_clar.get("question_text") or ""),
+                    rationale=f"Clarify contradiction: {pending_clar.get('code', '')}.",
+                    diagnostic_purpose="Nomuvofiqlikni aniqlashtirish — xulosa uchun zarur",
+                    missing_information=remaining,
+                )
+
+        contradiction = detect_contradictions(state)
+        if contradiction and contradiction.topic_slug not in answered:
+            state.pending_clarification = {
+                "code": contradiction.code,
+                "topic_slug": contradiction.topic_slug,
+                "question_text": contradiction.clarification_question,
+            }
+            return ClinicalDecision(
+                action="ask",
+                topic_slug=contradiction.topic_slug,
+                question_text=contradiction.clarification_question,
+                rationale=f"Resolve clinical contradiction ({contradiction.code}).",
+                diagnostic_purpose="Ma'lumotlardagi ziddiyatni bartaraf etish",
+                missing_information=remaining,
             )
 
         supp = _select_supplemental_node(state)
@@ -89,22 +117,50 @@ class DecisionEngine:
                 action="ask",
                 topic_slug=slug,
                 question_text=text,
-                rationale=f"New symptom follow-up ({source}).",
-                missing_information=pending,
+                rationale=f"New symptom ({source}) — collect evidence before concluding.",
+                diagnostic_purpose=f"Qo'shimcha belgi ({source}) bo'yicha ayiruvchi ma'lumot",
+                missing_information=remaining,
             )
 
-        node = _select_next_node(state.pathway_id, answered)
-        if node is None:
-            state.ready_for_closure = True
-            return ClinicalDecision(action="closure", rationale="All pathway nodes addressed.")
+        # Prioritize remaining mandatory / red-flag / competing-dx topics
+        if remaining:
+            slug = remaining[0]
+            node = _node_for_slug(state.pathway_id, slug)
+            if node:
+                from app.consultation_intelligence.question_selector import diagnostic_purpose
 
-        if state.has_asked(node.topic_slug) or node.topic_slug in answered:
-            return ClinicalDecision(action="closure", rationale="No unasked nodes remain.")
+                purpose = diagnostic_purpose(state, node)
+                blocker = readiness.blockers[0] if readiness.blockers else "evidence_collection"
+                return ClinicalDecision(
+                    action="ask",
+                    topic_slug=node.topic_slug,
+                    question_text=node.text,
+                    rationale=f"Evidence incomplete ({blocker}) — continue differential workup.",
+                    diagnostic_purpose=purpose,
+                    missing_information=remaining,
+                )
+
+        best = select_best_node(state)
+        if best is None:
+            return ClinicalDecision(
+                action="closure",
+                rationale="No further high-value questions; pathway exhausted.",
+                missing_information=remaining,
+            )
+
+        node, purpose = best
+        assessment = state.clinical_assessment or {}
+        leading = assessment.get("leading_diagnosis", "?")
+        gap = assessment.get("leading_gap_pct", 0)
 
         return ClinicalDecision(
             action="ask",
             topic_slug=node.topic_slug,
             question_text=node.text,
-            rationale=f"Pathway {state.pathway_id}: collect {node.clinical_info_label or node.topic_slug} before closure.",
-            missing_information=pending,
+            rationale=(
+                f"Continue evidence collection — leading: {leading} "
+                f"(gap {gap}%, uncertainty {assessment.get('uncertainty_score', '?')})."
+            ),
+            diagnostic_purpose=purpose,
+            missing_information=remaining,
         )

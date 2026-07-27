@@ -62,7 +62,7 @@ def _turn(messages: list, answers: dict, text: str):
 def main() -> None:
     init_db()
     runner = TestRunner()
-    runner.check("engine_version_v6", ENGINE_VERSION == "6.2.0", ENGINE_VERSION)
+    runner.check("engine_version_v6", ENGINE_VERSION == "6.4.0", ENGINE_VERSION)
 
     # Complaint recognition — left leg pain must not fall back to other_neurological
     leg = "Chap oyoq og'riyapti"
@@ -99,6 +99,33 @@ def main() -> None:
     runner.check("session_id_stable", state2.pathway_id == "lumbar_radiculopathy", state2.pathway_id)
     runner.check("answer_recorded", pending1 in state2.answered_slugs, str(state2.answered_slugs))
     runner.check("no_duplicate_question", r2.patient_reply != r1.patient_reply or state2.pending_topic != pending1, pending1)
+
+    # Dynamic differential updates after each answer
+    runner.check(
+        "differential_populated",
+        len(state2.differential) >= 1,
+        str(state2.differential[:2]),
+    )
+    runner.check(
+        "clinical_assessment_present",
+        bool(state2.clinical_assessment.get("leading_diagnosis")),
+        str(state2.clinical_assessment),
+    )
+    runner.check(
+        "closure_not_ready_early",
+        not state2.clinical_assessment.get("closure_readiness", {}).get("evidence_sufficient", True),
+        str(state2.clinical_assessment.get("closure_readiness")),
+    )
+    runner.check(
+        "exclusion_status_tracked",
+        any(d.get("exclusion_status") for d in state2.differential),
+        str(state2.differential[:2]),
+    )
+    runner.check(
+        "differential_probabilities_sum",
+        sum(d.get("probability_pct", 0) for d in state2.differential) > 90,
+        str([d.get("probability_pct") for d in state2.differential]),
+    )
 
     # Greeting mid-consultation must resume, not restart
     r3 = _turn(messages, answers, "Salom")
@@ -183,7 +210,7 @@ def main() -> None:
     )
     runner.check(
         "advice_continues_consultation",
-        "radikulopatiya" in adv.patient_reply.lower() or "bel-oyoq" in adv.patient_reply.lower(),
+        "ehtimoliy yo'nalish" in adv.patient_reply.lower() or "radikulopatiya" in adv.patient_reply.lower(),
         adv.patient_reply[:160],
     )
     runner.check(
@@ -196,7 +223,7 @@ def main() -> None:
     adv2 = _turn(adv_msgs, adv_answers, "Nima maslahat berasan?")
     runner.check(
         "advice_nima_maslahat",
-        "radikulopatiya" in adv2.patient_reply.lower() or "bel-oyoq" in adv2.patient_reply.lower(),
+        "ehtimoliy" in adv2.patient_reply.lower() or "radikulopatiya" in adv2.patient_reply.lower(),
         adv2.patient_reply[:160],
     )
     adv3 = _turn(adv_msgs, adv_answers, "Qanday davolansam bo'ladi?")

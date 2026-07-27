@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-ENGINE_VERSION = "6.2.0"
+ENGINE_VERSION = "6.4.0"
 
 
 class ConsultationStage(str, Enum):
@@ -79,6 +79,9 @@ class ConsultationState:
     secondary_symptoms: list[dict[str, Any]] = field(default_factory=list)
     supplemental_questions: list[dict[str, Any]] = field(default_factory=list)
 
+    clinical_assessment: dict[str, Any] = field(default_factory=dict)
+    pending_clarification: dict[str, Any] | None = None
+
     completion_pct: float = 0.0
     ready_for_closure: bool = False
     help_menu_shown: bool = False
@@ -107,6 +110,8 @@ class ConsultationState:
             "emergency_suspect_flags": list(self.emergency_suspect_flags),
             "secondary_symptoms": list(self.secondary_symptoms),
             "supplemental_questions": list(self.supplemental_questions),
+            "clinical_assessment": dict(self.clinical_assessment),
+            "pending_clarification": self.pending_clarification,
             "completion_pct": self.completion_pct,
             "ready_for_closure": self.ready_for_closure,
             "help_menu_shown": self.help_menu_shown,
@@ -170,6 +175,12 @@ class ConsultationState:
             supplemental_questions=[
                 dict(q) for q in (data.get("supplemental_questions") or []) if isinstance(q, dict)
             ],
+            clinical_assessment=dict(data.get("clinical_assessment") or {}),
+            pending_clarification=(
+                dict(data["pending_clarification"])
+                if isinstance(data.get("pending_clarification"), dict)
+                else None
+            ),
             completion_pct=float(data.get("completion_pct") or 0),
             ready_for_closure=bool(data.get("ready_for_closure")),
             help_menu_shown=bool(data.get("help_menu_shown")),

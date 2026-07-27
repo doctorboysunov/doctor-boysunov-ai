@@ -1,4 +1,4 @@
-"""ClinicalReasoner — syndrome recognition and differential diagnosis."""
+"""ClinicalReasoner — syndrome recognition, differential, and clinical assessment."""
 
 from __future__ import annotations
 
@@ -7,7 +7,11 @@ from typing import Any
 
 from app.clinical_brain.clinical_pathways import get_pathway, recognize_pathway
 from app.clinical_brain.senior_neurologist import identify_dominant_complaint
-from app.consultation_intelligence.answer_parser import is_positive
+from app.consultation_intelligence.contradiction_detector import detect_contradictions
+from app.consultation_intelligence.differential_engine import (
+    build_clinical_assessment,
+    update_differential,
+)
 from app.consultation_intelligence.emergency import evaluate_emergency_from_facts
 from app.consultation_intelligence.state import ConsultationState, EmergencyStatus
 from app.domain.consultation import ComplaintCategory
@@ -24,36 +28,7 @@ class ReasoningSnapshot:
     missing_information: list[str]
     emergency_status: EmergencyStatus
     confirmed_red_flags: list[str]
-
-
-def _build_differential(pathway_id: str, facts: dict[str, str]) -> list[dict[str, Any]]:
-    pathway = get_pathway(pathway_id)
-    if not pathway or not pathway.differential_targets:
-        return [{"name": pathway.syndrome if pathway else pathway_id, "probability_pct": 40.0, "rank": 1}]
-
-    ranked: list[dict[str, Any]] = []
-    for i, name in enumerate(pathway.differential_targets[:5]):
-        pct = max(12.0, 48.0 - i * 9)
-        ranked.append({"name": name, "probability_pct": pct, "rank": i + 1})
-
-    if facts:
-        for slug, val in facts.items():
-            val_lower = (val or "").lower()
-            if "cauda" in slug and is_positive(val):
-                if any(w in val_lower for w in ("ikki", "siydik", "najas", "hojat")):
-                    for item in ranked:
-                        if "cauda" in item["name"].lower():
-                            item["probability_pct"] = min(95.0, item["probability_pct"] + 30)
-            if "central" in slug and is_positive(val):
-                if any(w in val_lower for w in ("nutq", "yuz", "qo'l", "insult", "birdan")):
-                    for item in ranked:
-                        if "insult" in item["name"].lower() or "markaziy" in item["name"].lower():
-                            item["probability_pct"] = min(95.0, item["probability_pct"] + 25)
-
-    ranked.sort(key=lambda x: x["probability_pct"], reverse=True)
-    for i, item in enumerate(ranked):
-        item["rank"] = i + 1
-    return ranked
+    clinical_assessment: dict[str, Any]
 
 
 def _evaluate_emergency(state: ConsultationState, facts: dict[str, str]) -> tuple[EmergencyStatus, list[str]]:
@@ -61,7 +36,10 @@ def _evaluate_emergency(state: ConsultationState, facts: dict[str, str]) -> tupl
 
 
 class ClinicalReasoner:
-    """Determine syndrome and update differential from consultation state."""
+    """
+    Senior-neurologist reasoning loop:
+    Complaint → Syndrome → Differential → Missing info → (via DecisionEngine) Best question.
+    """
 
     def recognize(self, narrative: str, state: ConsultationState) -> ReasoningSnapshot:
         if state.pathway_locked and state.pathway_id:
@@ -91,10 +69,24 @@ class ClinicalReasoner:
     def update(self, state: ConsultationState) -> ReasoningSnapshot:
         pathway = get_pathway(state.pathway_id)
         facts = state.fact_map()
-        state.differential = _build_differential(state.pathway_id, facts)
+
+        state.differential = update_differential(state, facts)
+        state.clinical_assessment = build_clinical_assessment(state, state.differential)
+
         emergency, confirmed = _evaluate_emergency(state, facts)
         state.emergency_status = emergency
         state.confirmed_red_flags = confirmed
+
+        contradiction = detect_contradictions(state)
+        if contradiction and contradiction.topic_slug not in state.answered_slugs:
+            state.pending_clarification = {
+                "code": contradiction.code,
+                "topic_slug": contradiction.topic_slug,
+                "question_text": contradiction.clarification_question,
+            }
+        elif state.pending_clarification and state.pending_clarification.get("topic_slug") in state.answered_slugs:
+            state.pending_clarification = None
+
         return self._snapshot_from_pathway(state, pathway, state.recognition_rationale)
 
     def _snapshot_from_pathway(
@@ -104,17 +96,20 @@ class ClinicalReasoner:
         rationale: str,
     ) -> ReasoningSnapshot:
         facts = state.fact_map()
-        diff = state.differential or _build_differential(state.pathway_id, facts)
-        state.differential = diff
-        missing = state.missing_information
+        if not state.differential:
+            state.differential = update_differential(state, facts)
+        if not state.clinical_assessment:
+            state.clinical_assessment = build_clinical_assessment(state, state.differential)
+
         return ReasoningSnapshot(
             pathway_id=state.pathway_id,
             syndrome_label_uz=state.syndrome_label_uz,
             base_category=state.base_category,  # type: ignore[arg-type]
             dominant_complaint=state.dominant_complaint,
             rationale=rationale,
-            differential=diff,
-            missing_information=missing,
+            differential=state.differential,
+            missing_information=state.missing_information,
             emergency_status=state.emergency_status,
             confirmed_red_flags=list(state.confirmed_red_flags),
+            clinical_assessment=dict(state.clinical_assessment),
         )

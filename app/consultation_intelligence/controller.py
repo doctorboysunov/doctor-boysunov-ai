@@ -201,7 +201,10 @@ class ConsultationController:
             urgency="urgent" if state.confirmed_red_flags else "routine",
             red_flags_noted=list(state.confirmed_red_flags),
         )
-        return doctor.to_dict()
+        emr = doctor.to_dict()
+        if state.clinical_assessment:
+            emr["clinical_assessment"] = state.clinical_assessment
+        return emr
 
 
 _default_controller = ConsultationController()
