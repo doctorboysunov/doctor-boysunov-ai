@@ -170,9 +170,57 @@ def main() -> None:
                 replies,
             )
 
+    async def scenario_mid_consult_exact_reported_phrases() -> None:
+        # Follow-up bug report — each of these literal phrases, sent as the
+        # very next message after a consultation has already asked its first
+        # clinical question, must leave the questioning flow immediately and
+        # never fall back to the generic "Konsultatsiyamiz davom etmoqda"
+        # text (tested independently so no phrase's booking wizard consumes
+        # the next phrase as an answer).
+        phrases = (
+            "Online consultation",
+            "I want an appointment",
+            "I need consultation",
+            "Book me",
+            "Clinic appointment",
+        )
+        for idx, phrase in enumerate(phrases):
+            telegram_id = 8801200 + idx
+            user_id = upsert_user(telegram_id=telegram_id, username=f"router_d{idx}", full_name="Router D")
+            seed_default_location(user_id)
+            update = FakeUpdate(telegram_id, f"router_d{idx}", "Router D")
+            context = FakeContext()
+            r1 = await send_chat(update, context, "Chap oyoq og'riyapti, beldan tarqaladi")
+            runner.check(f"reported_phrase_consult_started:{phrase}", any("?" in r for r in r1), r1)
+            r2 = await send_chat(update, context, phrase)
+            runner.check(
+                f"reported_phrase_leaves_questioning:{phrase}",
+                all("?" not in r for r in r2),
+                r2,
+            )
+            runner.check(
+                f"reported_phrase_no_canned_fallback:{phrase}",
+                all(
+                    "oldingi ma'lumotlaringiz saqlangan" not in r.lower() and "davom etmoqda" not in r.lower()
+                    for r in r2
+                ),
+                r2,
+            )
+            runner.check(
+                f"reported_phrase_starts_booking_wizard:{phrase}",
+                any("ismingizni" in r.lower() for r in r2),
+                r2,
+            )
+            runner.check(
+                f"reported_phrase_booking_state_set:{phrase}",
+                bool(context.user_data.get(BOOKING_STATE_KEY)),
+                str(context.user_data),
+            )
+
     asyncio.run(scenario_mid_consult_booking())
     asyncio.run(scenario_emergency_outranks_booking())
     asyncio.run(scenario_english_booking_phrases())
+    asyncio.run(scenario_mid_consult_exact_reported_phrases())
 
     print()
     print("=" * 72)

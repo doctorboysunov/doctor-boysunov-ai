@@ -66,7 +66,7 @@ def _turn(messages: list, answers: dict, text: str):
 def main() -> None:
     init_db()
     runner = TestRunner()
-    runner.check("engine_version_v6", ENGINE_VERSION == "6.8.0", ENGINE_VERSION)
+    runner.check("engine_version_v6", ENGINE_VERSION == "6.8.1", ENGINE_VERSION)
 
     # Complaint recognition — left leg pain must not fall back to other_neurological
     leg = "Chap oyoq og'riyapti"
@@ -532,6 +532,39 @@ def main() -> None:
     )
     for phrase in booking_phrases:
         runner.check(f"booking_intent_detected:{phrase}", is_booking_intent(phrase), phrase)
+
+    # 1b. Follow-up bug report — these exact literal phrases (and natural
+    # variants with punctuation/politeness words) must all resolve to booking
+    # intent unconditionally, not via a fragile word-count heuristic.
+    booking_phrases_v2 = (
+        "Online consultation",
+        "I want an appointment",
+        "I need consultation",
+        "Book me",
+        "Clinic appointment",
+        "online consultation.",
+        "I want an appointment please",
+        "I'd like to book an appointment please",
+        "book me please",
+        "can I get a clinic appointment?",
+        "Online Consultation!",
+        "i need consultation asap",
+    )
+    for phrase in booking_phrases_v2:
+        runner.check(f"booking_intent_detected_v2:{phrase}", is_booking_intent(phrase), phrase)
+
+    # A pricing/cost question mentioning "consultation"/"appointment" must
+    # NOT be misread as a booking request (English or Uzbek).
+    runner.check(
+        "booking_intent_not_false_positive_pricing_en",
+        not is_booking_intent("How much does a consultation cost?"),
+        "",
+    )
+    runner.check(
+        "booking_intent_not_false_positive_pricing_uz",
+        not is_booking_intent("Qabul narxi qancha?"),
+        "",
+    )
 
     # A normal symptom narrative must never be misread as a booking request,
     # even if unrelated booking-ish words appear deep in a long sentence.
