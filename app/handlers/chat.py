@@ -13,7 +13,11 @@ from app.domain.admin_conversation_state import (
 from app.application.chat.load_conversation_context import load_conversation_context
 from app.container import get_container
 from app.domain.conversation_flow import mark_consultation_flow, resolve_incoming_message_flow
-from app.handlers.appointments import BOOKING_STATE_KEY, handle_appointment_flow
+from app.handlers.appointments import (
+    BOOKING_STATE_KEY,
+    handle_appointment_flow,
+    start_booking_flow_for_patient,
+)
 from app.handlers.clinic_location_handler import handle_clinic_location_request
 from app.handlers.doctor_visit_handler import handle_doctor_visit_message
 from app.handlers.pricing_handler import handle_pricing_request
@@ -30,6 +34,7 @@ from app.repositories.patient_profile_repository import (
     update_patient_profile,
 )
 from app.services.consultation_engine import (
+    is_global_emergency_message,
     process_consultation_turn,
     should_use_consultation_engine,
 )
@@ -168,6 +173,32 @@ async def process_text_message(
             return
         if medical_pause:
             trace.select("registration_paused_for_medical", "routing to Medical AI during registration")
+
+        # Conversation router priority #1: a confirmed emergency always wins,
+        # even over an explicit booking request — never let "call me" style
+        # phrasing swallow a genuine emergency message.
+        already_in_booking = bool(
+            getattr(context, "user_data", None) and context.user_data.get(BOOKING_STATE_KEY)
+        )
+        is_emergency_priority = not already_in_booking and is_global_emergency_message(user_message)
+        trace.check(
+            location="chat.py",
+            condition="not is_admin AND is_global_emergency_message (router priority 1)",
+            result=is_emergency_priority,
+            detail="emergency outranks booking/consultation routing",
+        )
+        if is_emergency_priority:
+            trace.select("emergency_priority_handler", "confirmed emergency red flags — bypass booking gate")
+            result = process_consultation_turn(
+                user_id,
+                user_message,
+                user_data=getattr(context, "user_data", None),
+            )
+            save_message(conversation_id, "assistant", result.reply)
+            trace.skip_medical_ai("emergency handled directly")
+            trace.dump()
+            await update.message.reply_text(result.reply)
+            return
 
         appt_handled = await handle_appointment_flow(
             update,
@@ -321,8 +352,18 @@ async def process_text_message(
             user_data=user_data,
         )
         save_message(conversation_id, "assistant", result.reply)
-        trace.dump()
         await update.message.reply_text(result.reply)
+        if result.wants_booking:
+            trace.select(
+                "appointment_booking_handoff",
+                "consultation engine detected booking intent mid-session",
+            )
+            trace.dump()
+            await start_booking_flow_for_patient(
+                update, context, user_id=user_id, conversation_id=conversation_id
+            )
+            return
+        trace.dump()
         return
 
     print("=== BEFORE ask_ai() ===")

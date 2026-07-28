@@ -10,6 +10,10 @@ from app.clinical_brain.types import DoctorEmrUpdate
 from app.consultation_intelligence.advice_engine import generate_personalized_advice
 from app.consultation_intelligence.answer_parser import parse_answer
 from app.consultation_intelligence.clinical_reasoner import ClinicalReasoner
+from app.consultation_intelligence.conversation_router import (
+    ConversationIntent,
+    classify_conversation_intent,
+)
 from app.consultation_intelligence.decision_engine import DecisionEngine
 from app.consultation_intelligence.emergency import (
     apply_message_screen,
@@ -38,6 +42,7 @@ class ControllerTurnResult:
     session_summary: dict[str, Any] = field(default_factory=dict)
     consultation_state: ConsultationState = field(default_factory=ConsultationState)
     engine_version: str = ENGINE_VERSION
+    wants_booking: bool = False
 
 
 def _narrative(messages: list[dict[str, str]], user_message: str) -> str:
@@ -52,11 +57,6 @@ def _is_greeting_only(text: str) -> bool:
     if lowered in {"salom", "assalomu alaykum", "assalom", "hello", "hi", "hayrli kun"}:
         return True
     return len(lowered.split()) <= 3 and any(w in lowered for w in ("salom", "assalom", "hello"))
-
-
-def _wants_new_complaint(text: str) -> bool:
-    lowered = text.strip().lower()
-    return any(p in lowered for p in ("yangi muammo", "boshqa shikoyat", "restart", "boshqadan"))
 
 
 def _pending_question_text(state: ConsultationState) -> str:
@@ -93,7 +93,20 @@ class ConsultationController:
             result.consultation_state = state
             return result
 
-        if _wants_new_complaint(user_message):
+        intent = classify_conversation_intent(
+            user_message,
+            is_confirmed_emergency=is_confirmed_emergency(state),
+            pathway_locked=state.pathway_locked,
+        )
+
+        if intent == ConversationIntent.BOOKING:
+            result.wants_booking = True
+            result.patient_reply = self._responses.booking_handoff(state)
+            state.persist_into(answers)
+            result.consultation_state = state
+            return result
+
+        if intent == ConversationIntent.NEW_COMPLAINT:
             result.patient_reply = self._responses.topic_clarification()
             state.persist_into(answers)
             result.consultation_state = state

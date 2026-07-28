@@ -6,6 +6,12 @@ from app.consultation_intelligence.controller import (
     ControllerTurnResult,
     process_consultation_intelligence_turn,
 )
+from app.consultation_intelligence.conversation_router import (
+    ConversationIntent,
+    classify_conversation_intent,
+    is_booking_intent,
+    is_new_complaint_intent,
+)
 from app.consultation_intelligence.decision_engine import ClinicalDecision, DecisionEngine
 from app.consultation_intelligence.reasoning_engine import IntelligenceTurnOutput, process_intelligence_turn
 from app.consultation_intelligence.response_generator import ResponseGenerator
@@ -18,10 +24,14 @@ __all__ = [
     "ConsultationStage",
     "ConsultationState",
     "ControllerTurnResult",
+    "ConversationIntent",
     "DecisionEngine",
     "ENGINE_VERSION",
     "IntelligenceTurnOutput",
     "ResponseGenerator",
+    "classify_conversation_intent",
+    "is_booking_intent",
+    "is_new_complaint_intent",
     "process_consultation_intelligence_turn",
     "process_intelligence_turn",
 ]

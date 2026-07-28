@@ -51,6 +51,12 @@ class ResponseGenerator:
             return f"{intro}\n\nAgar qo'shimcha belgi bo'lsa, yozing — konsultatsiyani davom ettiramiz."
         return intro
 
+    def booking_handoff(self, state: ConsultationState) -> str:
+        return (
+            "Albatta! Sizni qabulga/onlayn konsultatsiyaga yozamiz. "
+            "Konsultatsiyadagi ma'lumotlaringiz saqlanib qoladi — yozilishni tugatgach davom ettiramiz."
+        )
+
     def continue_after_help_action(self, state: ConsultationState) -> str:
         return (
             "Konsultatsiyamiz davom etmoqda — oldingi ma'lumotlaringiz saqlangan. "

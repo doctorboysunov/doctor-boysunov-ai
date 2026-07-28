@@ -159,3 +159,4 @@ class ConsultationTurnResult:
     used_consultation_engine: bool = True
     emergency: bool = False
     completed: bool = False
+    wants_booking: bool = False

@@ -126,6 +126,7 @@ class NeurologyTurnOutput:
     append_disclaimer: bool = False
     primary_specialty: MedicalSpecialty = "internal_medicine"
     secondary_specialties: list[MedicalSpecialty] = field(default_factory=list)
+    wants_booking: bool = False
 
     @property
     def suggests_emergency(self) -> bool:
@@ -270,6 +271,7 @@ def run_intelligence_turn(
         append_disclaimer=append_disclaimer,
         primary_specialty="neurology",
         secondary_specialties=[],
+        wants_booking=result.wants_booking,
     )
 
 

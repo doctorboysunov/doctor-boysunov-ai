@@ -109,6 +109,17 @@ def _merge_state(answers: dict[str, Any], state: dict[str, Any]) -> dict[str, An
     return merged
 
 
+def is_global_emergency_message(text: str) -> bool:
+    """Top-priority check reused by the conversation router (chat.py) so that a
+    confirmed emergency always outranks booking/other intents, even before the
+    consultation engine itself is invoked."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    flags = detect_consultation_red_flags(stripped)
+    return bool(flags) and _is_immediate_emergency(stripped, flags)
+
+
 def process_consultation_turn(
     patient_id: int,
     message: str,
@@ -414,6 +425,7 @@ def _start_new_session(
         phase="collecting",
         session_id=session.id,
         used_consultation_engine=True,
+        wants_booking=gpt.wants_booking,
     )
 
 
@@ -510,6 +522,7 @@ def _continue_session(
         phase="collecting",
         session_id=session.id,
         used_consultation_engine=True,
+        wants_booking=gpt.wants_booking,
     )
 
 

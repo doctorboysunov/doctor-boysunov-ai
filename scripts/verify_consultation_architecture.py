@@ -21,6 +21,10 @@ sys.path.insert(0, str(ROOT))
 from app.consultation_intelligence import (  # noqa: E402
     ENGINE_VERSION,
     ConsultationState,
+    ConversationIntent,
+    classify_conversation_intent,
+    is_booking_intent,
+    is_new_complaint_intent,
     process_consultation_intelligence_turn,
 )
 from app.clinical_brain.clinical_pathways.recognition import recognize_pathway, resolve_complaint_category
@@ -62,7 +66,7 @@ def _turn(messages: list, answers: dict, text: str):
 def main() -> None:
     init_db()
     runner = TestRunner()
-    runner.check("engine_version_v6", ENGINE_VERSION == "6.7.0", ENGINE_VERSION)
+    runner.check("engine_version_v6", ENGINE_VERSION == "6.8.0", ENGINE_VERSION)
 
     # Complaint recognition — left leg pain must not fall back to other_neurological
     leg = "Chap oyoq og'riyapti"
@@ -507,6 +511,115 @@ def main() -> None:
         not duplicate_found,
         str(sorted(seen_questions)),
     )
+
+    # --- Conversation router regression suite (v6.8.0) ------------------------
+    # Priority order: 1. Emergency  2. Booking  3. New complaint
+    #                 4. Continue consultation  5. General medical question.
+
+    # 1. Booking-intent phrases the user reported as missing must all be
+    #    recognized, in both English and Uzbek.
+    booking_phrases = (
+        "I want an online consultation",
+        "Book me",
+        "Appointment",
+        "Consultation",
+        "Call me",
+        "Onlayn konsultatsiya",
+        "Meni band qiling",
+        "Navbat olmoqchiman",
+        "Qabulga yoziling",
+        "Qo'ng'iroq qiling",
+    )
+    for phrase in booking_phrases:
+        runner.check(f"booking_intent_detected:{phrase}", is_booking_intent(phrase), phrase)
+
+    # A normal symptom narrative must never be misread as a booking request,
+    # even if unrelated booking-ish words appear deep in a long sentence.
+    runner.check(
+        "booking_intent_not_false_positive_on_symptom",
+        not is_booking_intent(
+            "Uch kundan beri belim va oyog'im og'riyapti, tunda uxlay olmayapman, kuchli og'riq bor"
+        ),
+        "should stay a clinical narrative",
+    )
+
+    # 2. Priority ordering — emergency always outranks booking.
+    runner.check(
+        "router_emergency_outranks_booking",
+        classify_conversation_intent("Book me", is_confirmed_emergency=True) == ConversationIntent.EMERGENCY,
+        "emergency must win over an explicit booking phrase",
+    )
+    runner.check(
+        "router_booking_outranks_new_complaint",
+        classify_conversation_intent("Book me, yangi muammo bor") == ConversationIntent.BOOKING,
+        "booking must win over new-complaint when both are present",
+    )
+    runner.check(
+        "router_new_complaint_detected",
+        classify_conversation_intent("Yangi muammo haqida gapirmoqchiman") == ConversationIntent.NEW_COMPLAINT,
+        "",
+    )
+    runner.check(
+        "router_continue_default_when_locked",
+        classify_conversation_intent("Ha, davom etamiz", pathway_locked=True)
+        == ConversationIntent.CONTINUE_CONSULTATION,
+        "",
+    )
+    runner.check(
+        "router_general_question_default",
+        classify_conversation_intent("Migren nima?", pathway_locked=False) == ConversationIntent.GENERAL_QUESTION,
+        "",
+    )
+    runner.check("new_complaint_intent_helper", is_new_complaint_intent("boshqa shikoyat bor"), "")
+
+    # 3. Bug fix regression — a booking phrase sent *mid-consultation* must
+    #    hand off to booking immediately, preserving all collected state,
+    #    instead of being swallowed as a bogus answer to the pending question.
+    book_answers: dict = {}
+    book_msgs: list[dict[str, str]] = []
+    b1 = _turn(book_msgs, book_answers, leg)
+    slugs_before_booking = list(b1.consultation_state.answered_slugs)
+    b2 = _turn(book_msgs, book_answers, "Meni band qiling, onlayn konsultatsiya kerak")
+    runner.check("mid_consult_booking_flag_set", b2.wants_booking, "")
+    runner.check(
+        "mid_consult_booking_state_preserved",
+        b2.consultation_state.pathway_id == "lumbar_radiculopathy"
+        and list(b2.consultation_state.answered_slugs) == slugs_before_booking,
+        f"{b2.consultation_state.pathway_id} / {b2.consultation_state.answered_slugs}",
+    )
+    runner.check(
+        "mid_consult_booking_reply_not_clinical_question",
+        "?" not in b2.patient_reply,
+        b2.patient_reply[:160],
+    )
+
+    # 4. Bug fix regression — after closure/help-menu is already shown, a
+    #    booking request must NOT fall back to the generic
+    #    "Konsultatsiyamiz davom etmoqda — oldingi ma'lumotlaringiz saqlangan"
+    #    canned text; it must hand off to booking instead.
+    post_closure_state = ConsultationState.load({})
+    post_closure_state.pathway_id = "lumbar_spine"
+    post_closure_state.pathway_locked = True
+    post_closure_state.syndrome_label_uz = "Lumbal umurtqa pog'onasi sindromi"
+    post_closure_state.dominant_complaint = "Bel og'rig'i"
+    post_closure_state.opening_complaint = "Belim og'riyapti"
+    post_closure_state.help_menu_shown = True
+    post_closure_answers: dict = {}
+    post_closure_state.record_answer("opening_complaint", "Belim og'riyapti", "Belim og'riyapti")
+    for node in get_pathway("lumbar_spine").nodes:
+        post_closure_state.record_answer(node.topic_slug, "ha", "ha")
+    post_closure_state.persist_into(post_closure_answers)
+    post_closure_result = process_consultation_intelligence_turn(
+        user_message="Onlayn konsultatsiya qilsam bo'ladimi?",
+        session_messages=[{"role": "user", "content": "Onlayn konsultatsiya qilsam bo'ladimi?"}],
+        answers=post_closure_answers,
+    )
+    runner.check(
+        "post_closure_booking_not_canned_fallback",
+        "oldingi ma'lumotlaringiz saqlangan" not in post_closure_result.patient_reply.lower(),
+        post_closure_result.patient_reply[:160],
+    )
+    runner.check("post_closure_booking_flag_set", post_closure_result.wants_booking, "")
 
     print()
     print("=" * 72)

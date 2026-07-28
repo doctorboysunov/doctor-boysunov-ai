@@ -9,6 +9,7 @@ from typing import Any
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from app.consultation_intelligence.conversation_router import is_booking_intent
 from app.domain.appointment_status import DEFAULT_DOCTOR_NAME
 from app.repositories.appointment_repository import create_appointment
 from app.repositories.conversation_repository import save_message
@@ -23,6 +24,10 @@ logger = logging.getLogger("doctor_boysunov.appointments")
 
 BOOKING_STATE_KEY = "appointment_booking"
 
+# Kept for backward compatibility — the actual detection now runs through the
+# shared conversation router (app.consultation_intelligence.conversation_router)
+# so booking phrases like "book me", "call me", "onlayn konsultatsiya", etc.
+# are recognized consistently everywhere in the app.
 BOOKING_TRIGGERS = (
     "i want an appointment",
     "navbat olmoqchiman",
@@ -51,8 +56,7 @@ CONFIRM_NO = ("yo'q", "yoq", "bekor", "cancel", "no")
 
 
 def is_booking_trigger(text: str) -> bool:
-    normalized = text.strip().lower()
-    return any(trigger in normalized for trigger in BOOKING_TRIGGERS)
+    return is_booking_intent(text)
 
 
 def _get_booking_state(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Any] | None:
@@ -127,6 +131,26 @@ async def _reply_and_remember(
     await update.message.reply_text(text)
 
 
+async def start_booking_flow_for_patient(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    user_id: int,
+    conversation_id: int,
+) -> None:
+    """Kick off the structured booking wizard directly (bypasses trigger-phrase
+    detection). Used both by ``handle_appointment_flow`` itself and by the
+    conversation router hand-off when a booking intent is detected mid-consultation."""
+    recommendation = recommend_clinic_for_patient(user_id)
+    prompt = _start_booking(context, recommendation=recommendation)
+    save_message(conversation_id, "assistant", prompt)
+    await update.message.reply_text(prompt)
+    if recommendation is not None:
+        clinic_msg = format_clinic_recommendation_message(recommendation)
+        save_message(conversation_id, "assistant", clinic_msg)
+        await update.message.reply_text(clinic_msg)
+
+
 async def handle_appointment_flow(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -143,14 +167,9 @@ async def handle_appointment_flow(
     if booking is None:
         if not is_booking_trigger(user_message):
             return False
-        recommendation = recommend_clinic_for_patient(user_id)
-        prompt = _start_booking(context, recommendation=recommendation)
-        save_message(conversation_id, "assistant", prompt)
-        await update.message.reply_text(prompt)
-        if recommendation is not None:
-            clinic_msg = format_clinic_recommendation_message(recommendation)
-            save_message(conversation_id, "assistant", clinic_msg)
-            await update.message.reply_text(clinic_msg)
+        await start_booking_flow_for_patient(
+            update, context, user_id=user_id, conversation_id=conversation_id
+        )
         return True
 
     step = booking.get("step")
