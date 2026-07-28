@@ -66,7 +66,7 @@ def _turn(messages: list, answers: dict, text: str):
 def main() -> None:
     init_db()
     runner = TestRunner()
-    runner.check("engine_version_v6", ENGINE_VERSION == "6.8.1", ENGINE_VERSION)
+    runner.check("engine_version_v6", ENGINE_VERSION == "6.8.2", ENGINE_VERSION)
 
     # Complaint recognition — left leg pain must not fall back to other_neurological
     leg = "Chap oyoq og'riyapti"

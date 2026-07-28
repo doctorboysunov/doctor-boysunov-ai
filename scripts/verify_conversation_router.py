@@ -217,10 +217,114 @@ def main() -> None:
                 str(context.user_data),
             )
 
+    async def scenario_repeated_booking_phrases_during_wizard() -> None:
+        # Latest bug report — once booking is triggered, repeating another
+        # booking-intent phrase (instead of answering the wizard's current
+        # question) must NEVER fall back to the consultation engine's
+        # "Konsultatsiyamiz davom etmoqda" text, and must never leave the
+        # booking workflow (state-machine lock, not a prompt fix).
+        telegram_id = 8801300
+        user_id = upsert_user(telegram_id=telegram_id, username="router_repeat", full_name="Router Repeat")
+        seed_default_location(user_id)
+        update = FakeUpdate(telegram_id, "router_repeat", "Router Repeat")
+        context = FakeContext()
+
+        r1 = await send_chat(update, context, "Chap oyoq og'riyapti, beldan tarqaladi")
+        runner.check("repeat_consult_started", any("?" in r for r in r1), r1)
+
+        r2 = await send_chat(update, context, "Online consultation")
+        runner.check("repeat_first_trigger_starts_wizard", any("ismingizni" in r.lower() for r in r2), r2)
+
+        for phrase in ("Online consultation", "I need consultation", "Book me", "Appointment"):
+            r = await send_chat(update, context, phrase)
+            runner.check(
+                f"repeat_no_canned_fallback:{phrase}",
+                all(
+                    "oldingi ma'lumotlaringiz saqlangan" not in x.lower() and "davom etmoqda" not in x.lower()
+                    for x in r
+                ),
+                r,
+            )
+            runner.check(
+                f"repeat_still_in_booking_state:{phrase}",
+                bool(context.user_data.get(BOOKING_STATE_KEY)),
+                str(context.user_data),
+            )
+            booking_after = context.user_data.get(BOOKING_STATE_KEY) or {}
+            runner.check(
+                f"repeat_did_not_corrupt_full_name:{phrase}",
+                booking_after.get("full_name") is None,
+                str(booking_after),
+            )
+            runner.check(
+                f"repeat_still_on_full_name_step:{phrase}",
+                booking_after.get("step") == "full_name",
+                str(booking_after),
+            )
+
+        # After the repeats, a real answer must still progress the wizard
+        # normally and let the patient finish booking end-to-end.
+        r3 = await send_chat(update, context, "Alisher Alisherov")
+        runner.check("repeat_then_real_name_advances", any("telefon" in x.lower() for x in r3), r3)
+        r4 = await send_chat(update, context, "+998907654321")
+        runner.check("repeat_then_phone_advances", any("sana" in x.lower() for x in r4), r4)
+        r5 = await send_chat(update, context, "2026-08-05")
+        runner.check("repeat_then_date_advances", any("vaqt" in x.lower() for x in r5), r5)
+        r6 = await send_chat(update, context, "10:00")
+        runner.check("repeat_then_time_advances", any("shikoyat" in x.lower() for x in r6), r6)
+        r7 = await send_chat(update, context, "Oyoq og'riyapti")
+        runner.check(
+            "repeat_then_complaint_shows_confirmation",
+            any("tasdiqlash" in x.lower() for x in r7),
+            r7,
+        )
+        r8 = await send_chat(update, context, "Ha")
+        runner.check(
+            "repeat_then_confirm_completes_booking",
+            any("qabul qilindi" in x.lower() for x in r8),
+            r8,
+        )
+        runner.check(
+            "repeat_booking_state_cleared_after_completion",
+            not context.user_data.get(BOOKING_STATE_KEY),
+            str(context.user_data),
+        )
+        appointments = get_patient_appointments(user_id)
+        runner.check(
+            "repeat_appointment_actually_created",
+            len(appointments) == 1 and appointments[0]["patient_full_name"] == "Alisher Alisherov",
+            appointments,
+        )
+
+    async def scenario_corrupted_step_never_leaks_to_consultation() -> None:
+        # Defensive state-machine repair: an unexpected/corrupted booking
+        # step value must never fall through to `return False` (which would
+        # leak the message into the consultation engine). It must repair
+        # itself and stay locked in the booking wizard.
+        telegram_id = 8801400
+        upsert_user(telegram_id=telegram_id, username="router_corrupt", full_name="Router Corrupt")
+        update = FakeUpdate(telegram_id, "router_corrupt", "Router Corrupt")
+        context = FakeContext()
+        context.user_data[BOOKING_STATE_KEY] = {"step": "some_unknown_step"}
+
+        r = await send_chat(update, context, "hello")
+        runner.check(
+            "corrupted_step_repairs_to_full_name",
+            any("ismingizni" in x.lower() for x in r),
+            r,
+        )
+        runner.check(
+            "corrupted_step_still_locked_in_booking",
+            bool(context.user_data.get(BOOKING_STATE_KEY)),
+            str(context.user_data),
+        )
+
     asyncio.run(scenario_mid_consult_booking())
     asyncio.run(scenario_emergency_outranks_booking())
     asyncio.run(scenario_english_booking_phrases())
     asyncio.run(scenario_mid_consult_exact_reported_phrases())
+    asyncio.run(scenario_repeated_booking_phrases_during_wizard())
+    asyncio.run(scenario_corrupted_step_never_leaks_to_consultation())
 
     print()
     print("=" * 72)

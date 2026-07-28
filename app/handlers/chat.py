@@ -147,6 +147,60 @@ async def process_text_message(
     patient_profile = get_or_create_patient_profile(user_id)
 
     if not decision.is_admin:
+        # Conversation router state-machine priority order (highest first):
+        #   1. Emergency        — a confirmed emergency always wins, even over
+        #                         an explicit booking request.
+        #   2. Booking          — once booking intent is detected (or a
+        #                         booking wizard is already in progress) it is
+        #                         a *lock*: every subsequent message routes
+        #                         straight into the wizard, ahead of location
+        #                         registration and the consultation engine,
+        #                         until the patient explicitly cancels.
+        #   3. Location registration / consultation (handled further below).
+        already_in_booking = bool(
+            getattr(context, "user_data", None) and context.user_data.get(BOOKING_STATE_KEY)
+        )
+        is_emergency_priority = not already_in_booking and is_global_emergency_message(user_message)
+        trace.check(
+            location="chat.py",
+            condition="not is_admin AND is_global_emergency_message (router priority 1)",
+            result=is_emergency_priority,
+            detail="emergency outranks booking/consultation routing",
+        )
+        if is_emergency_priority:
+            trace.select("emergency_priority_handler", "confirmed emergency red flags — bypass booking gate")
+            result = process_consultation_turn(
+                user_id,
+                user_message,
+                user_data=getattr(context, "user_data", None),
+            )
+            save_message(conversation_id, "assistant", result.reply)
+            trace.skip_medical_ai("emergency handled directly")
+            trace.dump()
+            await update.message.reply_text(result.reply)
+            return
+
+        # Booking priority #2 — checked BEFORE location registration so an
+        # in-progress (or freshly triggered) booking can never be hijacked by
+        # the location-registration step machine or any other gate.
+        appt_handled = await handle_appointment_flow(
+            update,
+            context,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        trace.check(
+            location="chat.py",
+            condition="not is_admin AND handle_appointment_flow returned True (router priority 2 — booking lock)",
+            result=appt_handled,
+            detail="patient appointment booking, checked ahead of location registration",
+        )
+        if appt_handled:
+            trace.select("appointment_booking_handler", "appointment flow handled message")
+            trace.skip_medical_ai("appointment handler returned early")
+            trace.dump()
+            return
+
         trace.consider("handle_location_registration_text (patient only)")
         location_result = await handle_location_registration_text(
             update,
@@ -173,50 +227,6 @@ async def process_text_message(
             return
         if medical_pause:
             trace.select("registration_paused_for_medical", "routing to Medical AI during registration")
-
-        # Conversation router priority #1: a confirmed emergency always wins,
-        # even over an explicit booking request — never let "call me" style
-        # phrasing swallow a genuine emergency message.
-        already_in_booking = bool(
-            getattr(context, "user_data", None) and context.user_data.get(BOOKING_STATE_KEY)
-        )
-        is_emergency_priority = not already_in_booking and is_global_emergency_message(user_message)
-        trace.check(
-            location="chat.py",
-            condition="not is_admin AND is_global_emergency_message (router priority 1)",
-            result=is_emergency_priority,
-            detail="emergency outranks booking/consultation routing",
-        )
-        if is_emergency_priority:
-            trace.select("emergency_priority_handler", "confirmed emergency red flags — bypass booking gate")
-            result = process_consultation_turn(
-                user_id,
-                user_message,
-                user_data=getattr(context, "user_data", None),
-            )
-            save_message(conversation_id, "assistant", result.reply)
-            trace.skip_medical_ai("emergency handled directly")
-            trace.dump()
-            await update.message.reply_text(result.reply)
-            return
-
-        appt_handled = await handle_appointment_flow(
-            update,
-            context,
-            user_id=user_id,
-            conversation_id=conversation_id,
-        )
-        trace.check(
-            location="chat.py",
-            condition="not is_admin AND handle_appointment_flow returned True",
-            result=appt_handled,
-            detail="patient appointment booking",
-        )
-        if appt_handled:
-            trace.select("appointment_booking_handler", "appointment flow handled message")
-            trace.skip_medical_ai("appointment handler returned early")
-            trace.dump()
-            return
 
         patient_profile = get_or_create_patient_profile(user_id)
         has_location = has_location_stored(patient_profile)

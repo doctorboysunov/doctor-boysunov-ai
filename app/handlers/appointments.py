@@ -173,11 +173,36 @@ async def handle_appointment_flow(
         return True
 
     step = booking.get("step")
+    if step not in BOOKING_STEPS:
+        # Defensive state-machine repair: a booking record must always be in a
+        # known step. Never silently fall through to `return False` (that
+        # would leak the message back into the consultation engine and is
+        # exactly the class of bug reported — booking must be a one-way lock
+        # until the user explicitly cancels).
+        booking["step"] = "full_name"
+        _set_booking_state(context, booking)
+        await _reply_and_remember(update, conversation_id, STEP_PROMPTS["full_name"])
+        return True
+
     answer = _normalize_answer(user_message)
 
     if step != "confirm" and _is_no(answer):
         _clear_booking_state(context)
         reply = "Qabulga yozilish bekor qilindi. Yana yozmoqchi bo'lsangiz, \"Navbat olmoqchiman\" deb yozing."
+        await _reply_and_remember(update, conversation_id, reply)
+        return True
+
+    if step != "confirm" and is_booking_intent(answer) and not _is_yes(answer):
+        # State-machine lock: the patient is already inside the booking wizard.
+        # If they repeat a booking-intent phrase ("Book me", "Online
+        # consultation", "Appointment", ...) instead of answering the current
+        # field, do NOT store that phrase as real data (it would corrupt the
+        # record with garbage like full_name="Book me") and do NOT fall back
+        # to the consultation engine. Stay locked on the same step.
+        reply = (
+            "Siz allaqachon qabulga yozilish jarayonidasiz — davom etamiz.\n\n"
+            f"{STEP_PROMPTS[step]}"
+        )
         await _reply_and_remember(update, conversation_id, reply)
         return True
 
@@ -288,5 +313,11 @@ async def handle_appointment_flow(
         await _reply_and_remember(update, conversation_id, reply)
         return True
 
-    _clear_booking_state(context)
-    return False
+    # Unreachable in practice (all valid BOOKING_STEPS are handled above and
+    # unknown steps are repaired earlier), but kept as a last-resort guard
+    # that still honors the "never leak back to consultation" lock instead of
+    # returning False.
+    booking["step"] = "full_name"
+    _set_booking_state(context, booking)
+    await _reply_and_remember(update, conversation_id, STEP_PROMPTS["full_name"])
+    return True
