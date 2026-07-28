@@ -96,6 +96,33 @@ def has_location_stored(profile: dict[str, Any] | None) -> bool:
     )
 
 
+# Mandatory patient registration, in required order: full name and phone
+# number are collected before any location fields. A medical consultation
+# (or the location-registration step machine) is only considered "done"
+# once every one of these is on file.
+REQUIRED_REGISTRATION_FIELDS: tuple[str, ...] = (
+    "full_name",
+    "phone_number",
+    "country",
+    "region",
+    "district",
+)
+
+
+def is_registration_complete(profile: dict[str, Any] | None) -> bool:
+    if not profile:
+        return False
+    return all(profile.get(field) for field in REQUIRED_REGISTRATION_FIELDS)
+
+
+def first_missing_registration_field(profile: dict[str, Any] | None) -> str | None:
+    profile = profile or {}
+    for field in REQUIRED_REGISTRATION_FIELDS:
+        if not profile.get(field):
+            return field
+    return None
+
+
 def format_coordinates(profile: dict[str, Any]) -> str | None:
     latitude = profile.get("latitude")
     longitude = profile.get("longitude")

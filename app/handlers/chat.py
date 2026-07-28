@@ -39,7 +39,7 @@ from app.services.consultation_engine import (
     should_use_consultation_engine,
 )
 from app.services.intent_router import classify_message_intent, log_intent_classification
-from app.services.location_profile import has_location_stored
+from app.services.location_profile import is_registration_complete
 from app.services.message_dispatcher import resolve_target_module
 from app.services.openai_service import ask_ai
 from app.services.profile_extraction import extract_profile_updates
@@ -229,16 +229,16 @@ async def process_text_message(
             trace.select("registration_paused_for_medical", "routing to Medical AI during registration")
 
         patient_profile = get_or_create_patient_profile(user_id)
-        has_location = has_location_stored(patient_profile)
+        registration_complete = is_registration_complete(patient_profile)
         trace.check(
             location="chat.py",
-            condition="not is_admin AND has_location_stored(patient_profile)",
-            result=has_location,
-            detail="patient must share location before AI",
+            condition="not is_admin AND is_registration_complete(patient_profile)",
+            result=registration_complete,
+            detail="patient must complete mandatory registration (name, phone, country, region, district) before AI",
         )
-        if not has_location and not medical_pause:
-            trace.select("location_gate", "patient has no location — silent return")
-            trace.skip_medical_ai("patient location not stored yet")
+        if not registration_complete and not medical_pause:
+            trace.select("registration_gate", "patient registration incomplete — silent return")
+            trace.skip_medical_ai("patient registration not complete yet")
             trace.dump()
             return
     else:

@@ -16,9 +16,10 @@ from app.repositories.patient_profile_repository import (
     update_patient_profile,
 )
 from app.services.location_profile import (
-    has_location_stored,
+    first_missing_registration_field,
     is_location_update_trigger,
     is_medical_complaint,
+    is_registration_complete,
     is_skip_answer,
 )
 from app.services.registration_state import (
@@ -38,7 +39,9 @@ logger = logging.getLogger("doctor_boysunov.location")
 SHARE_LOCATION_BUTTON = "📍 Lokatsiyani ulashish"
 
 STEP_PROMPTS = {
-    "country": "Ro'yxatdan o'tish: qaysi mamlakatda yashaysiz?",
+    "full_name": "Ro'yxatdan o'tish uchun to'liq ismingizni yozing:",
+    "phone_number": "Telefon raqamingizni yozing:",
+    "country": "Qaysi mamlakatda yashaysiz?",
     "region": "Qaysi viloyat yoki regionda yashaysiz?",
     "district": "Qaysi tumanda yashaysiz?",
     "address": (
@@ -53,7 +56,7 @@ STEP_PROMPTS = {
 }
 
 COMPLETION_MESSAGE = (
-    "Manzil ma'lumotlaringiz saqlandi. Endi savollaringizni yozishingiz mumkin."
+    "Ro'yxatdan o'tish yakunlandi, ma'lumotlaringiz saqlandi. Endi savollaringizni yozishingiz mumkin."
 )
 
 
@@ -80,9 +83,13 @@ def start_location_registration(
     context: ContextTypes.DEFAULT_TYPE,
     *,
     updating: bool = False,
+    patient_profile: dict[str, Any] | None = None,
 ) -> str:
-    start_registration(context, updating=updating)
-    return STEP_PROMPTS["country"]
+    first_step = None
+    if not updating:
+        first_step = first_missing_registration_field(patient_profile) or "full_name"
+    step = start_registration(context, updating=updating, first_step=first_step)
+    return STEP_PROMPTS[step]
 
 
 async def _reply_and_remember(
@@ -132,7 +139,7 @@ async def _maybe_complete_after_required_fields(
     conversation_id: int,
 ) -> LocationHandleResult | None:
     profile = get_patient_profile(user_id)
-    if profile and has_location_stored(profile):
+    if profile and is_registration_complete(profile):
         await _complete_registration(
             update,
             context,
@@ -171,26 +178,44 @@ async def handle_location_registration_text(
     step = get_pending_registration_step(context)
 
     if reg_state is None and step is None:
-        if has_location_stored(patient_profile):
+        if is_registration_complete(patient_profile):
             return LocationHandleResult.NOT_IN_REGISTRATION
-        start_registration(context)
+        first_step = first_missing_registration_field(patient_profile) or "full_name"
+        start_registration(context, first_step=first_step)
         await _reply_and_remember(
             update,
             conversation_id,
-            STEP_PROMPTS["country"],
+            STEP_PROMPTS[first_step],
             reply_markup=ReplyKeyboardRemove(),
         )
         return LocationHandleResult.HANDLED
 
     profile_now = get_patient_profile(user_id) or patient_profile
-    if step in ("address", "share_location") and has_location_stored(profile_now):
-        clear_registration_state(context)
-        logger.info(
-            "registration_auto_finished_required_fields_saved user_id=%s step=%s",
-            user_id,
-            step,
-        )
-        return LocationHandleResult.NOT_IN_REGISTRATION
+    if step in ("address", "share_location"):
+        if is_registration_complete(profile_now):
+            clear_registration_state(context)
+            logger.info(
+                "registration_auto_finished_required_fields_saved user_id=%s step=%s",
+                user_id,
+                step,
+            )
+            return LocationHandleResult.NOT_IN_REGISTRATION
+        missing = first_missing_registration_field(profile_now)
+        if missing:
+            # A legacy profile reached this optional step with a still-missing
+            # mandatory field (e.g. name/phone were added to the required
+            # list after this patient's location was already on file).
+            # Redirect back into the required sequence instead of accepting
+            # free text as an address/GPS answer.
+            set_registration_step(context, missing)
+            logger.info(
+                "registration_redirected_to_missing_required_field user_id=%s from_step=%s to_step=%s",
+                user_id,
+                step,
+                missing,
+            )
+            await _reply_and_remember(update, conversation_id, STEP_PROMPTS[missing])
+            return LocationHandleResult.HANDLED
 
     if reg_state == "paused":
         if is_medical_complaint(normalized):
@@ -221,6 +246,41 @@ async def handle_location_registration_text(
             normalized[:120],
         )
         return LocationHandleResult.MEDICAL_PAUSE
+
+    if step == "full_name":
+        if len(normalized) < 2:
+            await _reply_and_remember(
+                update,
+                conversation_id,
+                "Iltimos, to'liq ismingizni yozing.",
+            )
+            return LocationHandleResult.HANDLED
+        update_patient_profile(user_id, full_name=normalized)
+        set_registration_step(context, "phone_number")
+        await _reply_and_remember(update, conversation_id, STEP_PROMPTS["phone_number"])
+        return LocationHandleResult.HANDLED
+
+    if step == "phone_number":
+        digits = re.sub(r"\D", "", normalized)
+        if len(digits) < 9:
+            await _reply_and_remember(
+                update,
+                conversation_id,
+                "Iltimos, to'g'ri telefon raqamini yozing.",
+            )
+            return LocationHandleResult.HANDLED
+        update_patient_profile(user_id, phone_number=normalized)
+        completed = await _maybe_complete_after_required_fields(
+            update,
+            context,
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        if completed is not None:
+            return completed
+        set_registration_step(context, "country")
+        await _reply_and_remember(update, conversation_id, STEP_PROMPTS["country"])
+        return LocationHandleResult.HANDLED
 
     if step == "country":
         if len(normalized) < 2:

@@ -7,7 +7,19 @@ from typing import Any, Literal
 from telegram.ext import ContextTypes
 
 RegistrationState = Literal["active", "paused"]
-RegistrationStep = Literal["country", "region", "district", "address", "share_location"]
+RegistrationStep = Literal[
+    "full_name", "phone_number", "country", "region", "district", "address", "share_location"
+]
+
+_VALID_STEPS: tuple[str, ...] = (
+    "full_name",
+    "phone_number",
+    "country",
+    "region",
+    "district",
+    "address",
+    "share_location",
+)
 
 REGISTRATION_STATE_KEY = "registration_state"
 PENDING_REGISTRATION_STEP_KEY = "pending_registration_step"
@@ -38,12 +50,12 @@ def get_pending_registration_step(context: ContextTypes.DEFAULT_TYPE) -> Registr
     if data is None:
         return None
     step = data.get(PENDING_REGISTRATION_STEP_KEY)
-    if step in ("country", "region", "district", "address", "share_location"):
+    if step in _VALID_STEPS:
         return step
     legacy = data.get(LOCATION_STATE_KEY)
     if isinstance(legacy, dict):
         legacy_step = legacy.get("step")
-        if legacy_step in ("country", "region", "district", "address", "share_location"):
+        if legacy_step in _VALID_STEPS:
             return legacy_step
     return None
 
@@ -75,15 +87,30 @@ def _sync_legacy_location_key(context: ContextTypes.DEFAULT_TYPE) -> None:
     }
 
 
-def start_registration(context: ContextTypes.DEFAULT_TYPE, *, updating: bool = False) -> RegistrationStep:
+def start_registration(
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    updating: bool = False,
+    first_step: RegistrationStep | None = None,
+) -> RegistrationStep:
+    """Begin (or restart) the registration state machine.
+
+    ``first_step`` lets callers resume at the first still-missing required
+    field (e.g. a legacy patient who already has a location on file but no
+    phone number should start at "phone_number", not "full_name" again).
+    Defaults to "full_name" for a brand new registration, or "country" for
+    an explicit address-update trigger (name/phone are assumed already on
+    file in that case).
+    """
+    step: RegistrationStep = first_step or ("country" if updating else "full_name")
     data = _user_data(context)
     if data is None:
-        return "country"
+        return step
     data[REGISTRATION_STATE_KEY] = "active"
-    data[PENDING_REGISTRATION_STEP_KEY] = "country"
+    data[PENDING_REGISTRATION_STEP_KEY] = step
     data[REGISTRATION_UPDATING_KEY] = updating
     _sync_legacy_location_key(context)
-    return "country"
+    return step
 
 
 def set_registration_step(context: ContextTypes.DEFAULT_TYPE, step: RegistrationStep) -> None:

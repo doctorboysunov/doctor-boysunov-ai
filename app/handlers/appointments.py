@@ -13,7 +13,10 @@ from app.consultation_intelligence.conversation_router import is_booking_intent
 from app.domain.appointment_status import DEFAULT_DOCTOR_NAME
 from app.repositories.appointment_repository import create_appointment
 from app.repositories.conversation_repository import save_message
-from app.repositories.patient_profile_repository import update_patient_profile
+from app.repositories.patient_profile_repository import (
+    get_patient_profile,
+    update_patient_profile,
+)
 from app.services.appointment_notifications import notify_admins_new_appointment
 from app.services.clinic_locator_service import (
     format_clinic_recommendation_message,
@@ -74,13 +77,34 @@ def _clear_booking_state(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop(BOOKING_STATE_KEY, None)
 
 
-def _start_booking(context: ContextTypes.DEFAULT_TYPE, *, recommendation: dict | None = None) -> str:
+def _resolve_booking_start(patient_profile: dict[str, Any] | None) -> tuple[str, str | None, str | None]:
+    """Reuse the patient's already-registered name/phone instead of asking
+    again. Registration is mandatory before consultation, so by the time a
+    patient can trigger booking they normally already have both on file —
+    this skips straight to the appointment date in that case."""
+    profile = patient_profile or {}
+    full_name = profile.get("full_name")
+    phone_number = profile.get("phone_number")
+    if full_name and phone_number:
+        return "appointment_date", full_name, phone_number
+    if full_name:
+        return "phone_number", full_name, None
+    return "full_name", None, None
+
+
+def _start_booking(
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    recommendation: dict | None = None,
+    patient_profile: dict[str, Any] | None = None,
+) -> str:
+    first_step, known_name, known_phone = _resolve_booking_start(patient_profile)
     _set_booking_state(
         context,
         {
-            "step": "full_name",
-            "full_name": None,
-            "phone_number": None,
+            "step": first_step,
+            "full_name": known_name,
+            "phone_number": known_phone,
             "appointment_date": None,
             "appointment_time": None,
             "complaint": None,
@@ -89,7 +113,7 @@ def _start_booking(context: ContextTypes.DEFAULT_TYPE, *, recommendation: dict |
             "clinic_name": recommendation.get("clinic_name") if recommendation else None,
         },
     )
-    return STEP_PROMPTS["full_name"]
+    return STEP_PROMPTS[first_step]
 
 
 def _build_confirmation_summary(booking: dict[str, Any]) -> str:
@@ -140,9 +164,21 @@ async def start_booking_flow_for_patient(
 ) -> None:
     """Kick off the structured booking wizard directly (bypasses trigger-phrase
     detection). Used both by ``handle_appointment_flow`` itself and by the
-    conversation router hand-off when a booking intent is detected mid-consultation."""
+    conversation router hand-off when a booking intent is detected mid-consultation.
+
+    If the patient already completed mandatory registration (full name +
+    phone number on file), those steps are skipped and reused instead of
+    asking again."""
     recommendation = recommend_clinic_for_patient(user_id)
-    prompt = _start_booking(context, recommendation=recommendation)
+    patient_profile = get_patient_profile(user_id)
+    prompt = _start_booking(context, recommendation=recommendation, patient_profile=patient_profile)
+    reused_name = (patient_profile or {}).get("full_name")
+    reused_phone = (patient_profile or {}).get("phone_number")
+    if reused_name and reused_phone:
+        prompt = (
+            f"Ismingiz ({reused_name}) va telefon raqamingiz ({reused_phone}) "
+            f"ro'yxatdan o'tish ma'lumotlaringizdan olindi.\n\n{prompt}"
+        )
     save_message(conversation_id, "assistant", prompt)
     await update.message.reply_text(prompt)
     if recommendation is not None:

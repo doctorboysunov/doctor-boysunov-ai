@@ -138,6 +138,8 @@ async def send_location(
 
 async def run_registration(context: FakeContext) -> list[str]:
     steps = [
+        "Location User",
+        "+998901112233",
         "O'zbekiston",
         "Toshkent",
         "Yunusobod",
@@ -193,7 +195,7 @@ def main() -> None:
 
     context = FakeContext()
     start_reply = asyncio.run(start(FakeUpdate(), context))
-    runner.in_("start_asks_country", "mamlakat", start_reply.lower())
+    runner.in_("start_asks_full_name", "ismingizni", start_reply.lower())
     runner.true("start_begins_registration", LOCATION_STATE_KEY in context.user_data)
 
     ask_ai_calls: list = []
@@ -205,7 +207,9 @@ def main() -> None:
     with patch("app.handlers.chat.ask_ai", side_effect=track_ask_ai):
         registration_replies = asyncio.run(run_registration(context))
 
-    runner.in_("registration_moves_to_region", "viloyat", registration_replies[0].lower())
+    runner.in_("registration_moves_to_phone", "telefon", registration_replies[0].lower())
+    runner.in_("registration_moves_to_country", "mamlakat", registration_replies[1].lower())
+    runner.in_("registration_moves_to_region", "viloyat", registration_replies[2].lower())
     runner.true("registration_completed", "saqlandi" in registration_replies[-1].lower())
     runner.eq("registration_no_ai", len(ask_ai_calls), 0)
     runner.true(
@@ -218,6 +222,8 @@ def main() -> None:
     profile = get_patient_profile(user_id)
     runner.true("profile_has_location", profile is not None and has_location_stored(profile))
     if profile:
+        runner.eq("profile_full_name", profile["full_name"], "Location User")
+        runner.true("profile_phone_number", bool(profile["phone_number"]))
         runner.eq("profile_country", profile["country"], "O'zbekiston")
         runner.eq("profile_region", profile["region"], "Toshkent")
         runner.eq("profile_district", profile["district"], "Yunusobod")

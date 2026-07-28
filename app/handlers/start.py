@@ -6,7 +6,7 @@ from app.handlers.common import register_telegram_user
 from app.handlers.location import start_location_registration
 from app.repositories.patient_profile_repository import get_or_create_patient_profile
 from app.services.admin_bootstrap import claim_admin_with_pin
-from app.services.location_profile import has_location_stored
+from app.services.location_profile import is_registration_complete
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -22,8 +22,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = register_telegram_user(update)
     profile = get_or_create_patient_profile(user_id)
 
-    if not has_location_stored(profile):
-        prompt = start_location_registration(context)
+    if not is_registration_complete(profile):
+        prompt = start_location_registration(context, patient_profile=profile)
         await update.message.reply_text(prompt, reply_markup=None)
         return prompt
 

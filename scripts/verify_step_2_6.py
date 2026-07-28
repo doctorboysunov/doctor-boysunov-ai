@@ -72,8 +72,8 @@ CONSULTATION_FLOW = FlowDecision(
 @contextmanager
 def patient_flow_patches():
     with (
-        patch("app.handlers.start.has_location_stored", return_value=True),
-        patch("app.handlers.chat.has_location_stored", return_value=True),
+        patch("app.handlers.start.is_registration_complete", return_value=True),
+        patch("app.handlers.chat.is_registration_complete", return_value=True),
         patch(
             "app.handlers.chat.resolve_incoming_message_flow",
             return_value=CONSULTATION_FLOW,

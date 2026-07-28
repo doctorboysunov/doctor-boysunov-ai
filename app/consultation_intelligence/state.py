@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-ENGINE_VERSION = "6.8.2"
+ENGINE_VERSION = "6.9.0"
 
 
 class ConsultationStage(str, Enum):

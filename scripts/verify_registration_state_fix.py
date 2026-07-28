@@ -109,6 +109,8 @@ async def main() -> None:
 
     update_patient_profile(
         stuck_user_id,
+        full_name="Stuck Patient",
+        phone_number="+998901112233",
         country="Uzbekistonda",
         region="Surxandaryo",
         district="Jarqorgon",
@@ -153,9 +155,11 @@ async def main() -> None:
     fresh_context = FakeContext()
     ask_ai.reset_mock()
 
-    print("\n=== RUN: fresh registration (country -> region -> district -> auto complete) ===")
+    print("\n=== RUN: fresh registration (name -> phone -> country -> region -> district -> auto complete) ===")
     with patch("app.handlers.chat.ask_ai", ask_ai):
-        await send(fresh_user, "O'zbekiston", fresh_context)
+        await send(fresh_user, "Salom", fresh_context)
+        await send(fresh_user, "Fresh Patient", fresh_context)
+        await send(fresh_user, "+998901234567", fresh_context)
         await send(fresh_user, "O'zbekiston", fresh_context)
         await send(fresh_user, "Surxandaryo", fresh_context)
         r3 = await send(fresh_user, "Jarqorgon", fresh_context)
@@ -185,7 +189,9 @@ async def main() -> None:
     with patch("app.handlers.chat.ask_ai", ask_ai), patch(
         "app.services.consultation_engine.run_neurology_turn", return_value=_MOCK_GPT
     ):
-        await send(pause_user, "O'zbekiston", pause_context)
+        await send(pause_user, "Salom", pause_context)
+        await send(pause_user, "Pause Patient", pause_context)
+        await send(pause_user, "+998907776655", pause_context)
         await send(pause_user, "O'zbekiston", pause_context)
         await send(pause_user, "Surxandaryo", pause_context)
         medical_reply = await send(pause_user, "Boshim og'riyapti", pause_context)
